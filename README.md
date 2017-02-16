@@ -92,8 +92,13 @@ GNU General Public License version 3.
 ## Contributing
 
 Contributions to any part of this project are very much welcome. However
-it is necessary to sign a contributor agreement first. Please download
-[the agreement](https://github.com/wireapp/wire/raw/master/assets/Wire%20Contributor%20Agreement.pdf),
-fill in all required information and send it to opensource@wire.com. Once
-the agreement has been processed, contributions will be gladly accepted.
+it is necessary to sign a contributor agreement first. The actual agreement
+can be found here:
+
+  https://github.com/wireapp/wire/raw/master/assets/Wire%20Contributor%20Agreement.pdf
+
+When you submit your first pull request [CLAssistant](https://github.com/CLAassistant)
+will present you a link to a submission form. Once the agreement has been submitted
+your contribution and any possible future ones will be gladly considered for
+inclusion into this project.
 

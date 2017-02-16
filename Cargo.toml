@@ -1,0 +1,12 @@
+[workspace]
+members = [
+    "coax-actor",
+    "coax-api",
+    "coax-api-proto",
+    "coax-client",
+    "coax-data",
+    "coax-gtk",
+    "coax-net",
+    "coax-ws"
+]
+

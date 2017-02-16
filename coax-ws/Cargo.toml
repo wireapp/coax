@@ -1,0 +1,24 @@
+[package]
+name        = "coax-ws"
+version     = "0.1.0"
+authors     = ["Wire Swiss GmbH <support@wire.com>"]
+license     = "GPL-3.0"
+readme      = "README.md"
+repository  = "https://github.com/wireapp/coax"
+homepage    = "https://github.com/wireapp/coax"
+description = "Partial websocket protocol implementation (RFC 6455)"
+
+[dependencies]
+byteorder       = ">= 0.5"
+coax-net        = { path = "../coax-net" }
+slog            = ">= 1.0"
+openssl         = ">= 0.9"
+quick-error     = ">= 1.1"
+rand            = ">= 0.3"
+rustc-serialize = ">= 0.3"
+url             = ">= 1.1"
+
+[dev-dependencies]
+slog      = { version = ">= 1.0", features = ["std", "max_level_debug" ] }
+slog-term = ">= 0.5"
+

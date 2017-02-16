@@ -1,0 +1,52 @@
+[package]
+name        = "coax-gtk"
+version     = "0.1.0"
+authors     = ["Wire Swiss GmbH <support@wire.com>"]
+license     = "GPL-3.0"
+readme      = "README.md"
+repository  = "https://github.com/wireapp/coax"
+homepage    = "https://github.com/wireapp/coax"
+description = "Wire client (GTK+ version)"
+build       = "build.rs"
+
+[build-dependencies]
+gcc        = ">= 0.3"
+pkg-config = ">= 0.3"
+
+[features]
+prod = ["coax-actor/prod"]
+
+[dependencies]
+chrono             = ">= 0.2"
+clap               = "2"
+coax-actor         = { path = "../coax-actor" }
+coax-api           = { path = "../coax-api" }
+coax-api-proto     = { path = "../coax-api-proto" }
+coax-client        = { path = "../coax-client" }
+coax-data          = { path = "../coax-data" }
+coax-net           = { path = "../coax-net" }
+cookie             = { git = "https://github.com/alexcrichton/cookie-rs.git", default-features = false }
+cryptobox          = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
+fnv                = ">= 1.0"
+futures            = ">= 0.1"
+futures-spawn      = ">= 0.1"
+futures-threadpool = ">= 0.1"
+gdk-pixbuf         = { git = "https://github.com/gtk-rs/gdk-pixbuf" }
+gio                = { git = "https://github.com/gtk-rs/gio" }
+glib               = { git = "https://github.com/gtk-rs/glib" }
+glib-sys           = { git = "https://github.com/gtk-rs/sys" }
+gobject-sys        = { git = "https://github.com/gtk-rs/sys" }
+gtk                = { git = "https://github.com/gtk-rs/gtk", features = ["v3_16"] }
+gtk-sys            = { git = "https://github.com/gtk-rs/sys" }
+json-codec         = ">= 0.4"
+lazy_static        = ">= 0.2"
+libc               = ">= 0.2"
+openssl            = ">= 0.9"
+quick-error        = ">= 1.1"
+pango-sys          = { git = "https://github.com/gtk-rs/sys" }
+proteus            = { git = "https://github.com/wireapp/proteus.git", branch = "develop" }
+rand               = ">= 0.3"
+slog               = { version = ">= 1.0", features = ["std", "max_level_debug" ] }
+slog-term          = ">= 0.5"
+url                = ">= 1.1"
+

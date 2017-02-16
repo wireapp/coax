@@ -1,0 +1,35 @@
+[package]
+name        = "coax-actor"
+version     = "0.1.0"
+authors     = ["Wire Swiss GmbH <support@wire.com>"]
+license     = "GPL-3.0"
+readme      = "README.md"
+repository  = "https://github.com/wireapp/coax"
+homepage    = "https://github.com/wireapp/coax"
+description = "Higher-level client for Wire with persistent storage."
+
+[dependencies]
+app_dirs        = ">= 1.1"
+chrono          = ">= 0.2"
+coax-api        = { path = "../coax-api" }
+coax-api-proto  = { path = "../coax-api-proto" }
+coax-client     = { path = "../coax-client" }
+coax-data       = { path = "../coax-data" }
+coax-net        = { path = "../coax-net" }
+cookie          = { git = "https://github.com/alexcrichton/cookie-rs.git", default-features = false }
+cryptobox       = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
+json-codec      = ">= 0.4"
+openssl         = ">= 0.9"
+quick-error     = ">= 1.1"
+proteus         = { git = "https://github.com/wireapp/proteus.git", branch = "develop" }
+protobuf        = ">= 1.0"
+rand            = ">= 0.3"
+serde           = ">= 0.9"
+serde_derive    = ">= 0.9"
+slog            = ">= 1.0"
+slog-term       = ">= 0.5"
+toml            = ">= 0.3"
+url             = ">= 1.1"
+
+[features]
+prod = []

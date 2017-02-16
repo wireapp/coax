@@ -1,0 +1,6 @@
+[Desktop Entry]
+Name=Coax
+Type=Application
+Exec=@bindir@/coax-gtk
+Icon=application-x-executable
+StartupNotify=true

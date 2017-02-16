@@ -27,7 +27,7 @@ use contact::Contacts;
 use ffi;
 use futures::{self, Future};
 use futures_spawn::SpawnHelper;
-use futures_threadpool::ThreadPool;
+use futures_threadpool::{self as pool, ThreadPool};
 use gio::{self, MenuModel, SimpleAction};
 use glib_sys;
 use gtk::prelude::*;
@@ -118,9 +118,9 @@ impl Coax {
 
         let coax = Coax {
             log:      log,
-            pool_act: ThreadPool::new(1),
-            pool_rem: ThreadPool::new(1),
-            pool_loc: ThreadPool::new(1),
+            pool_act: pool::Builder::new().pool_size(1).name_prefix("act-").create(),
+            pool_rem: pool::Builder::new().pool_size(1).name_prefix("rem-").create(),
+            pool_loc: pool::Builder::new().pool_size(1).name_prefix("loc-").create(),
             futures:  tx,
             profiles: Arc::new(Mutex::new(pdb)),
             builder:  builder,

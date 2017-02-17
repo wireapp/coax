@@ -12,8 +12,8 @@ description = "Storage layer for coax client"
 chrono          = ">= 0.2"
 coax-api        = { path = "../coax-api" }
 coax-api-proto  = { path = "../coax-api-proto" }
-diesel          = { version = ">= 0.9", default-features = false, features = ["sqlite"] }
-diesel_codegen  = { version = ">= 0.9", default-features = false, features = ["sqlite"] }
+diesel          = { version = ">= 0.11", default-features = false, features = ["sqlite"] }
+diesel_codegen  = { version = ">= 0.11", default-features = false, features = ["sqlite"] }
 quick-error     = ">= 1.1"
 slog            = ">= 1.0"
 

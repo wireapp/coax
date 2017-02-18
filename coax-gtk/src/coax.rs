@@ -10,7 +10,7 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use channel::{Channel, Message};
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Local, UTC};
 use coax_actor::{Actor, Error, Pkg};
 use coax_actor::actor::{Init, Connected, Offline, Online};
 use coax_actor::config;
@@ -27,7 +27,7 @@ use contact::Contacts;
 use ffi;
 use futures::{self, Future};
 use futures_spawn::SpawnHelper;
-use futures_threadpool::ThreadPool;
+use futures_threadpool::{self as pool, ThreadPool};
 use gio::{self, MenuModel, SimpleAction};
 use glib_sys;
 use gtk::prelude::*;
@@ -59,6 +59,7 @@ pub struct Coax {
     mainview: gtk::Grid,
     convlist: gtk::ListBox,
     send_btn: gtk::Button,
+    timezone: Local,
     channels: Rc<RefCell<HashMap<ConvId, Channel>>>,
     contacts: Rc<RefCell<Contacts>>,
     me:       Rc<RefCell<User<'static>>>,
@@ -118,9 +119,9 @@ impl Coax {
 
         let coax = Coax {
             log:      log,
-            pool_act: ThreadPool::new(1),
-            pool_rem: ThreadPool::new(1),
-            pool_loc: ThreadPool::new(1),
+            pool_act: pool::Builder::new().pool_size(1).name_prefix("act-").create(),
+            pool_rem: pool::Builder::new().pool_size(1).name_prefix("rem-").create(),
+            pool_loc: pool::Builder::new().pool_size(1).name_prefix("loc-").create(),
             futures:  tx,
             profiles: Arc::new(Mutex::new(pdb)),
             builder:  builder,
@@ -129,6 +130,7 @@ impl Coax {
             mainview: mainview,
             convlist: convlist,
             send_btn: sendbtn,
+            timezone: Local::now().timezone(),
             contacts: Rc::new(RefCell::new(Contacts::new())),
             channels: Rc::new(RefCell::new(HashMap::new())),
             me:       Rc::new(RefCell::new(usr)),
@@ -643,12 +645,14 @@ impl Coax {
                 let mut usr = res.user_mut(&m.user.id).unwrap();
                 match m.data {
                     MessageData::Text(ref txt) => {
-                        let msg = Message::text(Some(m.time.clone()), &mut usr, txt);
+                        let tme = m.time.with_timezone(&self.timezone);
+                        let msg = Message::text(Some(tme), &mut usr, txt);
                         ch.push_msg(&m.id, msg)
                     }
                     MessageData::MemberJoined => {
                         let txt = format!("{} has joined this conversation.", usr.name);
-                        let msg = Message::text(Some(m.time.clone()), &mut usr, &txt);
+                        let tme = m.time.with_timezone(&self.timezone);
+                        let msg = Message::text(Some(tme), &mut usr, &txt);
                         ch.push_msg(&m.id, msg)
                     }
                 }
@@ -675,10 +679,10 @@ impl Coax {
 
     fn on_message_update(&self, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
         debug!(self.log, "on_message_update"; "conv" => c.to_string(), "id" => id);
-        if let Some(ch) = self.channels.borrow().get(&c) {
-            if let Some(msg) = ch.get_msg(&id) {
+        if let Some(mut ch) = self.channels.borrow_mut().get_mut(&c) {
+            if let Some(mut msg) = ch.get_msg_mut(&id) {
                 if s == MessageStatus::Sent {
-                    msg.set_time(&t)
+                    msg.set_time(t.with_timezone(&self.timezone))
                 }
             }
         } else {
@@ -693,7 +697,7 @@ impl Coax {
         }
 
         if conv.ctype != ConvType::OneToOne {
-            let ch = Channel::new(&conv.time, &conv.id, &conv.name, conv.ctype);
+            let ch = Channel::new(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.ctype);
             self.convlist.add(ch.channel_row());
             self.channels.borrow_mut().insert(conv.id, ch);
             self.convlist.show_all();
@@ -706,7 +710,7 @@ impl Coax {
             let res = self.res.borrow();
             if let Some(u) = res.user(&uid) {
                 conv.set_name(Name::new(u.name.clone()));
-                let ch = Channel::new(&conv.time, &conv.id, &conv.name, conv.ctype);
+                let ch = Channel::new(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.ctype);
                 self.convlist.add(ch.channel_row());
                 self.channels.borrow_mut().insert(conv.id, ch);
                 self.convlist.show_all();
@@ -718,7 +722,7 @@ impl Coax {
         let this   = self.clone();
         let future = self.pool_act.spawn(self.process_one2one(me.id.clone(), conv))
             .map(with!(this => move |c| {
-                let ch = Channel::new(&c.time, &c.id, &c.name, c.ctype);
+                let ch = Channel::new(&c.time.with_timezone(&this.timezone), &c.id, &c.name, c.ctype);
                 this.convlist.add(ch.channel_row());
                 this.channels.borrow_mut().insert(c.id, ch);
                 this.convlist.show_all()
@@ -752,6 +756,7 @@ impl Coax {
 
     fn on_members_add(&self, app: &gtk::Application, time: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>) {
         debug!(self.log, "on_members_add"; "conv" => cid.to_string());
+        let local_time = time.with_timezone(&self.timezone);
         match self.channels.borrow_mut().entry(cid.clone()) {
             Entry::Vacant(e) => {
                 if let Some(Io::Online(ref mut a)) = *self.actor.lock().unwrap() {
@@ -771,7 +776,7 @@ impl Coax {
                                 return ()
                             }
                         };
-                    let mut ch = Channel::new(&time, &cid, &conv.name, conv.ctype);
+                    let mut ch = Channel::new(&local_time, &cid, &conv.name, conv.ctype);
                     for m in members {
                         let id = m.id.as_uuid().simple().to_string();
                         if ch.has_msg(&id) {
@@ -779,7 +784,7 @@ impl Coax {
                         }
                         self.ensure_user_res(&m);
                         let txt = format!("{} has joined this conversation.", m.name.as_str());
-                        let msg = Message::text(Some(time), &mut (&m).into(), &txt);
+                        let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
                         ch.push_msg(&id, msg)
                     }
                     self.convlist.add(ch.channel_row());
@@ -795,7 +800,7 @@ impl Coax {
                     }
                     self.ensure_user_res(&m);
                     let txt = format!("{} has joined this conversation.", m.name.as_str());
-                    let msg = Message::text(Some(time), &mut (&m).into(), &txt);
+                    let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
                     e.get_mut().push_msg(&id, msg);
                     self.convlist.invalidate_sort()
                 }
@@ -942,12 +947,19 @@ impl Coax {
                 this.pool_rem.spawn(this.send(params, msg))
             }))
             .map(with!(this, id, mid => move |dt| {
-                let channels = this.channels.borrow();
-                if let Some(ch) = channels.get(&id) {
-                    if let Some(msg) = ch.get_msg(&mid) {
-                        msg.stop_spinner();
-                        msg.set_time(&dt);
-                        ch.update_time(&dt);
+                let mut channels = this.channels.borrow_mut();
+                if let Some(mut ch) = channels.get_mut(&id) {
+                    let loc_time  = dt.with_timezone(&this.timezone);
+                    let msg_found =
+                        if let Some(mut msg) = ch.get_msg_mut(&mid) {
+                            msg.stop_spinner();
+                            msg.set_time(loc_time);
+                            true
+                        } else {
+                            false
+                        };
+                    if msg_found {
+                        ch.update_time(&loc_time);
                         this.convlist.invalidate_sort()
                     }
                 }
@@ -1017,7 +1029,7 @@ impl Coax {
                         this.ensure_user_res(&m.user);
                         let mut res = this.res.borrow_mut();
                         let mut usr = res.user_mut(&m.user.id).unwrap();
-                        let msg = match m.data {
+                        let mut msg = match m.data {
                             MessageData::Text(txt) =>
                                 Message::text(None, &mut usr, &txt),
                             MessageData::MemberJoined => {
@@ -1028,7 +1040,7 @@ impl Coax {
                         if m.status == MessageStatus::Created {
                             msg.set_error()
                         } else {
-                            msg.set_time(&m.time)
+                            msg.set_time(m.time.with_timezone(&this.timezone))
                         }
                         chan.push_front_msg(&m.id, msg)
                     }

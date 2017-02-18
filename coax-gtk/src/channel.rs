@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Local};
 use coax_api::conv::ConvType;
 use coax_api::types::{Name, ConvId};
 use ffi;
@@ -27,7 +27,7 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn new(dt: &DateTime<UTC>, id: &ConvId, n: &Option<Name>, ty: ConvType) -> Channel {
+    pub fn new(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, ty: ConvType) -> Channel {
         let channel_row = gtk::ListBoxRow::new();
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
@@ -138,6 +138,10 @@ impl Channel {
         self.model.get(&hash(k))
     }
 
+    pub fn get_msg_mut(&mut self, k: &str) -> Option<&mut Message> {
+        self.model.get_mut(&hash(k))
+    }
+
     pub fn push_front_msg(&mut self, id: &str, m: Message) {
         self.message_list.prepend(&m.row);
         self.model.insert(hash(id), m);
@@ -159,7 +163,7 @@ impl Channel {
         self.init = true
     }
 
-    pub fn update_time(&self, dt: &DateTime<UTC>) {
+    pub fn update_time(&self, dt: &DateTime<Local>) {
         self.set_time(dt);
         self.update_tstamp(dt.timestamp())
     }
@@ -168,7 +172,7 @@ impl Channel {
         ffi::set_data(&self.channel_row, &ffi::TSTAMP, dt)
     }
 
-    fn set_time(&self, dt: &DateTime<UTC>) {
+    fn set_time(&self, dt: &DateTime<Local>) {
         let tstr = dt.format("%T").to_string();
         let dstr = dt.format("%F").to_string();
         self.time_label.set_markup(&format!("<small>{}</small>", tstr));
@@ -183,7 +187,7 @@ impl Channel {
 
 #[derive(Debug, Clone)]
 pub struct Message {
-    dtime: Option<DateTime<UTC>>,
+    dtime: Option<DateTime<Local>>,
     time:  gtk::Label,
     icon:  gtk::Image,
     row:   gtk::ListBoxRow,
@@ -191,7 +195,7 @@ pub struct Message {
 }
 
 impl Message {
-    pub fn text(dt: Option<DateTime<UTC>>, u: &mut res::User, txt: &str) -> Message {
+    pub fn text(dt: Option<DateTime<Local>>, u: &mut res::User, txt: &str) -> Message {
         let row = gtk::ListBoxRow::new();
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
@@ -238,12 +242,13 @@ impl Message {
         }
     }
 
-    pub fn set_time(&self, dt: &DateTime<UTC>) {
+    pub fn set_time(&mut self, dt: DateTime<Local>) {
         if let Some(w) = self.grid.get_child_at(2, 0) {
             self.grid.remove(&w)
         }
         let tstr = dt.format("%T").to_string();
         self.time.set_markup(&format!("<small>{}</small>", tstr));
+        self.dtime = Some(dt);
         self.grid.attach(&self.time, 2, 0, 1, 1)
     }
 

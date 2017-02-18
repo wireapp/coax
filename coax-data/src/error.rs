@@ -1,4 +1,4 @@
-use diesel::result::{self, ConnectionError, TransactionError};
+use diesel::result::{self, ConnectionError};
 
 quick_error! {
     #[derive(Debug)]
@@ -10,11 +10,6 @@ quick_error! {
         }
         Result(e: result::Error) {
             display("result error: {}", e)
-            cause(e)
-            from()
-        }
-        Transaction(e: TransactionError<result::Error>) {
-            display("transaction error: {}", e)
             cause(e)
             from()
         }

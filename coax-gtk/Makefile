@@ -2,7 +2,7 @@ SHELL         := /usr/bin/env bash
 OS	          := $(shell uname -s | tr '[:upper:]' '[:lower:]')
 CARGO_HOME    ?= $(HOME)/.cargo
 XDG_DATA_HOME ?= $(HOME)/.local/share
-INSTALL_TYPE  ?= --debug # --debug | --features=prod
+INSTALL_TYPE  ?= --features=prod # --debug | --features=prod
 
 
 all: build

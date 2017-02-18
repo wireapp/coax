@@ -81,8 +81,7 @@ Building the whole client depends on recent versions of
 Individual libraries may have less dependencies. To start the build cd
 into `coax-gtk` and type `make install`. The resulting executable is
 installed into `$HOME/.cargo/bin`. On startup a configuration file
-`coax.toml` is written to `$HOME/.config/coax/` and defaults to the
-`staging` environment.
+`coax.toml` is written to `$HOME/.config/coax/`.
 
 ## License
 

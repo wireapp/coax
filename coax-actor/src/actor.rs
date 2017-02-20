@@ -27,6 +27,7 @@ use coax_data::{self as data, Database, Connection, Conversation, User};
 use coax_data::{MessageStatus, MessageData, NewMessage, QueueItem, QueueItemData};
 use coax_data::db::{self, PagingState};
 use coax_net::http::tls::{Tls, TlsStream};
+use coax_ws::io::{Error as WsError};
 use config;
 use cookie::Cookie;
 use error::{self, Error, React};
@@ -1340,7 +1341,7 @@ impl Inbox {
     ///
     /// NB: This method never terminates!
     pub fn start(&mut self, mut wsock: Listener<'static, TlsStream>) -> ! {
-        'recv_loop: loop {
+        loop {
             match wsock.listen() : Result<Notification, ClientError<coax_client::error::Void>> {
                 Ok(n) => {
                     debug!(self.logger, "received"; "id" => n.id.to_string());
@@ -1353,15 +1354,29 @@ impl Inbox {
                     self.actor.state.bcast.send(Pkg::Disconnected).unwrap();
                     let mut d = 1;
                     loop {
-                        thread::sleep(Duration::from_secs(d));
-                        debug!(self.logger, "reconnecting");
-                        let t = self.actor.state.user.creds.lock().unwrap();
-                        let r = wsock.reconnect_wss(&t.token);
-                        if r.is_ok() {
-                            self.actor.state.bcast.send(Pkg::Connected).unwrap();
-                            continue 'recv_loop
+                        debug!(self.logger, "reconnecting websocket ...");
+                        let res = {
+                            let t = self.actor.state.user.creds.lock().unwrap();
+                            wsock.reconnect_wss(&t.token)
+                        };
+                        match res {
+                            Ok(()) => {
+                                debug!(self.logger, "websocket reconnected");
+                                self.actor.state.bcast.send(Pkg::Connected).unwrap();
+                                break
+                            }
+                            Err(ClientError::WebSocket(WsError::Handshake(401, _))) => {
+                                debug!(self.logger, "handshake unauthorised, renewing credentials ...");
+                                if let Err(e) = self.actor.state.client.reconnect().map_err(From::from).and(self.actor.renew_access()) {
+                                    error!(self.logger, "error renewing access: {}", e)
+                                } else {
+                                    continue
+                                }
+                            }
+                            Err(e) => error!(self.logger, "websocket reconnect error: {}", e)
                         }
                         if d < 30 { d += 1 }
+                        thread::sleep(Duration::from_secs(d))
                     }
                 }
             }

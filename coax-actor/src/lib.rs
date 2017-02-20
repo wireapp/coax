@@ -8,6 +8,7 @@ extern crate coax_api_proto;
 extern crate coax_client;
 extern crate coax_data;
 extern crate coax_net;
+extern crate coax_ws;
 extern crate cookie;
 extern crate cryptobox;
 extern crate json;

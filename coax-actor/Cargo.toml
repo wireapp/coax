@@ -16,6 +16,7 @@ coax-api-proto  = { path = "../coax-api-proto" }
 coax-client     = { path = "../coax-client" }
 coax-data       = { path = "../coax-data" }
 coax-net        = { path = "../coax-net" }
+coax-ws         = { path = "../coax-ws" }
 cookie          = { git = "https://github.com/alexcrichton/cookie-rs.git", default-features = false }
 cryptobox       = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 json-codec      = ">= 0.4"

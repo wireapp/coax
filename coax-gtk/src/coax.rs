@@ -641,18 +641,21 @@ impl Coax {
         if let Some(mut ch) = self.channels.borrow_mut().get_mut(&m.conv) {
             if !ch.has_msg(&m.id) {
                 self.ensure_user_res(&m.user);
+                let mtime = m.time.with_timezone(&self.timezone);
+                if mtime.date() != ch.newest_date() {
+                    let date = ch.newest_date();
+                    ch.add(Message::date(date))
+                }
                 let mut res = self.res.borrow_mut();
                 let mut usr = res.user_mut(&m.user.id).unwrap();
                 match m.data {
                     MessageData::Text(ref txt) => {
-                        let tme = m.time.with_timezone(&self.timezone);
-                        let msg = Message::text(Some(tme), &mut usr, txt);
+                        let msg = Message::text(Some(mtime), &mut usr, txt);
                         ch.push_msg(&m.id, msg)
                     }
                     MessageData::MemberJoined => {
                         let txt = format!("{} has joined this conversation.", usr.name);
-                        let tme = m.time.with_timezone(&self.timezone);
-                        let msg = Message::text(Some(tme), &mut usr, &txt);
+                        let msg = Message::text(Some(mtime), &mut usr, &txt);
                         ch.push_msg(&m.id, msg)
                     }
                 }
@@ -786,6 +789,10 @@ impl Coax {
                             continue
                         }
                         self.ensure_user_res(&m);
+                        if local_time.date() != ch.newest_date() {
+                            let date = ch.newest_date();
+                            ch.add(Message::date(date))
+                        }
                         let txt = format!("{} has joined this conversation.", m.name.as_str());
                         let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
                         ch.push_msg(&id, msg)
@@ -802,6 +809,10 @@ impl Coax {
                         continue
                     }
                     self.ensure_user_res(&m);
+                    if local_time.date() != e.get().newest_date() {
+                        let date = e.get().newest_date();
+                        e.get_mut().add(Message::date(date))
+                    }
                     let txt = format!("{} has joined this conversation.", m.name.as_str());
                     let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
                     e.get_mut().push_msg(&id, msg);
@@ -953,15 +964,19 @@ impl Coax {
                 let mut channels = this.channels.borrow_mut();
                 if let Some(mut ch) = channels.get_mut(&id) {
                     let loc_time  = dt.with_timezone(&this.timezone);
-                    let msg_found =
+                    let msg_index =
                         if let Some(mut msg) = ch.get_msg_mut(&mid) {
                             msg.stop_spinner();
-                            msg.set_time(loc_time);
-                            true
+                            msg.set_time(loc_time.clone());
+                            msg.index()
                         } else {
-                            false
+                            -1
                         };
-                    if msg_found {
+                    if msg_index != -1 {
+                        if loc_time.date() != ch.newest_date() {
+                            let date  = ch.newest_date();
+                            ch.insert(msg_index, Message::date(date))
+                        }
                         ch.update_time(&loc_time);
                         this.convlist.invalidate_sort()
                     }
@@ -1025,6 +1040,7 @@ impl Coax {
         let future = self.pool_act.spawn(self.messages(cid, None)) // TODO
             .map(with!(this, cid => move |mm| {
                 if let Some(mut chan) = this.channels.borrow_mut().get_mut(&cid) {
+                    let is_empty = mm.data.is_empty();
                     for m in mm.data {
                         if chan.has_msg(&m.id) {
                             continue
@@ -1040,12 +1056,22 @@ impl Coax {
                                 Message::text(None, &mut usr, &txt)
                             }
                         };
+                        let mtime   = m.time.with_timezone(&this.timezone);
+                        let daydiff = mtime.date() != chan.oldest_date();
                         if m.status == MessageStatus::Created {
                             msg.set_error()
                         } else {
-                            msg.set_time(m.time.with_timezone(&this.timezone))
+                            msg.set_time(mtime)
+                        }
+                        if daydiff {
+                            let date = chan.oldest_date();
+                            chan.add_front(Message::date(date))
                         }
                         chan.push_front_msg(&m.id, msg)
+                    }
+                    if !is_empty {
+                        let date = chan.oldest_date();
+                        chan.add_front(Message::date(date));
                     }
                     chan.set_init()
                 };

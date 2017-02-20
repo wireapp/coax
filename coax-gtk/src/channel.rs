@@ -1,7 +1,7 @@
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use chrono::{DateTime, Local};
+use chrono::{Date, DateTime, Local};
 use coax_api::conv::ConvType;
 use coax_api::types::{Name, ConvId};
 use ffi;
@@ -23,7 +23,9 @@ pub struct Channel {
     message_view: gtk::ScrolledWindow,
     model:        FnvHashMap<u64, Message>,
     init:         bool,
-    autoscroll:   Rc<AtomicBool>
+    autoscroll:   Rc<AtomicBool>,
+    date_lower:   Date<Local>,
+    date_upper:   Date<Local>
 }
 
 impl Channel {
@@ -114,7 +116,9 @@ impl Channel {
             message_view: message_view,
             model:        FnvHashMap::default(),
             init:         false,
-            autoscroll:   autoscroll
+            autoscroll:   autoscroll,
+            date_lower:   dt.date(),
+            date_upper:   dt.date()
         };
 
         ch.set_name(n.as_ref().unwrap_or(&Name::new("N/A")).as_str());
@@ -142,15 +146,37 @@ impl Channel {
         self.model.get_mut(&hash(k))
     }
 
+    pub fn insert(&mut self, i: i32, m: Message) {
+        self.message_list.insert(&m.row, i)
+    }
+
+    pub fn add_front(&mut self, m: Message) {
+        self.message_list.prepend(&m.row);
+        if let Some(ref time) = m.dtime {
+            self.date_lower = time.date()
+        }
+    }
+
+    pub fn add(&mut self, m: Message) {
+        self.message_list.add(&m.row);
+        if let Some(ref time) = m.dtime {
+            self.date_upper = time.date()
+        }
+    }
+
     pub fn push_front_msg(&mut self, id: &str, m: Message) {
         self.message_list.prepend(&m.row);
+        if let Some(ref time) = m.dtime {
+            self.date_lower = time.date()
+        }
         self.model.insert(hash(id), m);
     }
 
     pub fn push_msg(&mut self, id: &str, m: Message) {
         self.message_list.add(&m.row);
         if let Some(ref time) = m.dtime {
-            self.update_time(time)
+            self.date_upper = time.date();
+            self.update_time(time);
         }
         self.model.insert(hash(id), m);
     }
@@ -161,6 +187,14 @@ impl Channel {
 
     pub fn set_init(&mut self) {
         self.init = true
+    }
+
+    pub fn oldest_date(&self) -> Date<Local> {
+        self.date_lower
+    }
+
+    pub fn newest_date(&self) -> Date<Local> {
+        self.date_upper
     }
 
     pub fn update_time(&self, dt: &DateTime<Local>) {
@@ -188,10 +222,10 @@ impl Channel {
 #[derive(Debug, Clone)]
 pub struct Message {
     dtime: Option<DateTime<Local>>,
-    time:  gtk::Label,
-    icon:  gtk::Image,
     row:   gtk::ListBoxRow,
-    grid:  gtk::Grid
+    grid:  gtk::Grid,
+    icon:  gtk::Image,
+    time:  gtk::Label
 }
 
 impl Message {
@@ -235,11 +269,42 @@ impl Message {
 
         Message {
             dtime: dt,
-            time:  time,
-            icon:  img,
             row:   row,
-            grid:  grid
+            grid:  grid,
+            icon:  img,
+            time:  time
         }
+    }
+
+    pub fn date(d: Date<Local>) -> Message {
+        let row  = gtk::ListBoxRow::new();
+        let grid = gtk::Grid::new();
+        grid.set_margin_left(6);
+        grid.set_margin_top(6);
+        grid.set_margin_right(6);
+        grid.set_margin_bottom(6);
+
+        let time = gtk::Label::new(None);
+        time.set_hexpand(true);
+        time.set_halign(Align::Fill);
+        let dstr = d.format("%F").to_string();
+        time.set_markup(&format!("<big><b>{}</b></big>", dstr));
+        grid.attach(&time, 0, 0, 1, 1);
+
+        row.add(&grid);
+        row.show_all();
+
+        Message {
+            dtime: Some(d.and_hms(0, 0, 0)),
+            row:   row,
+            grid:  grid,
+            icon:  gtk::Image::new(),
+            time:  time
+        }
+    }
+
+    pub fn index(&self) -> i32 {
+        self.row.get_index()
     }
 
     pub fn set_time(&mut self, dt: DateTime<Local>) {

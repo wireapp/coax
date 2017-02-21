@@ -693,6 +693,7 @@ impl Coax {
     fn on_conversation(&self, mut conv: Conversation<'static>) {
         debug!(self.log, "on_conversation"; "conv" => conv.id.to_string());
         if self.channels.borrow().contains_key(&conv.id) {
+            debug!(self.log, "conversation already loaded"; "conv" => conv.id.to_string());
             return ()
         }
 
@@ -722,10 +723,12 @@ impl Coax {
         let this   = self.clone();
         let future = self.pool_act.spawn(self.process_one2one(me.id.clone(), conv))
             .map(with!(this => move |c| {
-                let ch = Channel::new(&c.time.with_timezone(&this.timezone), &c.id, &c.name, c.ctype);
-                this.convlist.add(ch.channel_row());
-                this.channels.borrow_mut().insert(c.id, ch);
-                this.convlist.show_all()
+                if !this.channels.borrow().contains_key(&c.id) {
+                    let ch = Channel::new(&c.time.with_timezone(&this.timezone), &c.id, &c.name, c.ctype);
+                    this.convlist.add(ch.channel_row());
+                    this.channels.borrow_mut().insert(c.id, ch);
+                    this.convlist.show_all()
+                }
             }))
             .map_err(with!(this => move |e| {
                 error!(this.log, "failed to post-process one to one conversation"; "error" => format!("{}", e))

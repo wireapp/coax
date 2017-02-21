@@ -261,6 +261,7 @@ impl Message {
         grid.attach(&lbl, 1, 1, 1, 1);
 
         let time = gtk::Label::new(None);
+        time.set_margin_bottom(6);
         if let Some(t) = dt {
             let tstr = t.format("%T").to_string();
             time.set_markup(&format!("<small>{}</small>", tstr))

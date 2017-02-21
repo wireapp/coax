@@ -103,10 +103,6 @@ impl Resources {
         self.user.insert(u.id.clone(), u.into());
     }
 
-    pub fn user(&self, id: &UserId) -> Option<&User> {
-        self.user.get(id)
-    }
-
     pub fn user_mut(&mut self, id: &UserId) -> Option<&mut User> {
         self.user.get_mut(id)
     }

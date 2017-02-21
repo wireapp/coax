@@ -481,11 +481,12 @@ impl Actor<Online> {
         debug!(&self.logger, "loading user icon"; "id" => u.id.to_string());
         if let Some(ref i) = u.icon {
             self.state.user.assets.push(i.as_str());
-            let file = {
+            let file = error::retry3x(|r: Option<React<()>>| {
+                self.react(r)?;
                 let ref p = self.state.user.assets;
                 let creds = self.state.user.creds.lock().unwrap();
                 load_asset(&self.logger, &mut self.state.client, p, i, None, &creds.token)
-            };
+            });
             self.state.user.assets.pop();
             let mut data = Vec::new();
             if let Some(mut f) = file? {
@@ -1288,7 +1289,7 @@ fn load_asset(g: &Logger, c: &mut Client, p: &Path, k: &AssetKey, t: Option<&Ass
     let url = c.asset_url(k, t, s)?;
     debug!(g, "downloading asset"; "url" => format!("{}", url));
     let dom = url.host_str().ok_or(Error::Message("missing host in asset url"))?;
-    let (mut rpc, tkn) = c.prepare_download(&url, dom)?; // TODO: retry on error
+    let (mut rpc, tkn) = c.prepare_download(&url, dom)?;
     if rpc.response().status() != 200 {
         return Ok(None)
     }

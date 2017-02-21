@@ -82,7 +82,7 @@ impl Contact {
         name.set_markup(&format!("<big><b>{}</b></big>", usr.name));
         grid.attach(&name, 0, 0, 1, 1);
 
-        let img = usr.pict();
+        let img = usr.icon_large();
         img.set_margin_left(6);
         img.set_margin_top(6);
         img.set_margin_right(6);

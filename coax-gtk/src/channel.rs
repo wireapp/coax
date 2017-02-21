@@ -2,7 +2,6 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{Date, DateTime, Local};
-use coax_api::conv::ConvType;
 use coax_api::types::{Name, ConvId};
 use ffi;
 use fnv::FnvHashMap;
@@ -29,7 +28,20 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn new(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, ty: ConvType) -> Channel {
+    pub fn one_to_one(dt: &DateTime<Local>, id: &ConvId, u: &mut res::User) -> Channel {
+        Channel::new(dt, id, &Some(Name::new(u.name.clone())), u.icon_medium())
+    }
+
+    pub fn group(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>) -> Channel {
+        let img = {
+            let buf = Pixbuf::new_from_resource("/coax/icons/bubbles.png").unwrap();
+            let ico = buf.scale_simple(48, 48, InterpType::Bilinear).unwrap();
+            gtk::Image::new_from_pixbuf(Some(&ico))
+        };
+        Channel::new(dt, id, n, img)
+    }
+
+    fn new(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, img: gtk::Image) -> Channel {
         let channel_row = gtk::ListBoxRow::new();
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
@@ -37,20 +49,7 @@ impl Channel {
         grid.set_margin_right(6);
         grid.set_margin_bottom(6);
 
-        let img =
-            if ty == ConvType::Group {
-                let buf = Pixbuf::new_from_resource("/coax/icons/bubbles.png").unwrap();
-                let ico = buf.scale_simple(32, 32, InterpType::Bilinear).unwrap();
-                gtk::Image::new_from_pixbuf(Some(&ico))
-            } else {
-                let buf = Pixbuf::new_from_resource("/coax/icons/user.png").unwrap();
-                let ico = buf.scale_simple(32, 32, InterpType::Bilinear).unwrap();
-                gtk::Image::new_from_pixbuf(Some(&ico))
-            };
-        img.set_margin_left(6);
-        img.set_margin_top(6);
-        img.set_margin_right(6);
-        img.set_margin_bottom(6);
+        img.set_margin_right(12);
         grid.attach(&img, 0, 0, 1, 2);
 
         let name_label = gtk::Label::new(None);
@@ -242,7 +241,7 @@ impl Message {
         grid.set_margin_bottom(6);
         grid.set_column_spacing(12);
 
-        let img = u.icon();
+        let img = u.icon_small();
         img.set_margin_bottom(6);
         grid.attach(&img, 0, 0, 1, 1);
 
@@ -262,6 +261,7 @@ impl Message {
         grid.attach(&lbl, 1, 1, 1, 1);
 
         let time = gtk::Label::new(None);
+        time.set_margin_bottom(6);
         if let Some(t) = dt {
             let tstr = t.format("%T").to_string();
             time.set_markup(&format!("<small>{}</small>", tstr))

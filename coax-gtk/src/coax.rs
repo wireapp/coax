@@ -1,7 +1,6 @@
 use std;
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::ffi::CString;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -505,7 +504,7 @@ impl Coax {
                 this.hide_info();
                 this.ensure_user_res(&*this.me.borrow());
                 let mut res = this.res.borrow_mut();
-                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().pict();
+                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().icon_large();
             }))
             .map_err(with!(app, this => move |e| {
                 this.hide_info();
@@ -596,7 +595,7 @@ impl Coax {
             .and_then(with!(this => move |_| {
                 this.ensure_user_res(&*this.me.borrow());
                 let mut res = this.res.borrow_mut();
-                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().pict();
+                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().icon_large();
                 this.pool_rem.spawn(this.resend_messages())
             }))
             .map_err(with!(app => move |e| {
@@ -700,7 +699,7 @@ impl Coax {
         }
 
         if conv.ctype != ConvType::OneToOne {
-            let ch = Channel::new(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.ctype);
+            let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name);
             self.convlist.add(ch.channel_row());
             self.channels.borrow_mut().insert(conv.id, ch);
             self.convlist.show_all();
@@ -710,10 +709,10 @@ impl Coax {
         // Set remote user name as conversation name if user is already in `self.res`.
         let me = self.me.borrow();
         if let Some(uid) = conv.members.iter().filter(|m| **m != me.id).next().cloned() {
-            let res = self.res.borrow();
-            if let Some(u) = res.user(&uid) {
+            let mut res = self.res.borrow_mut();
+            if let Some(mut u) = res.user_mut(&uid) {
                 conv.set_name(Name::new(u.name.clone()));
-                let ch = Channel::new(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.ctype);
+                let ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
                 self.convlist.add(ch.channel_row());
                 self.channels.borrow_mut().insert(conv.id, ch);
                 self.convlist.show_all();
@@ -721,15 +720,30 @@ impl Coax {
             }
         }
 
-        // Use process_one2one future to retrieve remote user and set name.
+        let user_id =
+            if let Some(id) = conv.members.iter().filter(|m| **m != me.id).next().cloned() {
+                id
+            } else {
+                warn!(self.log, "no user found in 1:1 conversation"; "conv" => conv.id.to_string());
+                return ()
+            };
+
         let this   = self.clone();
-        let future = self.pool_act.spawn(self.process_one2one(me.id.clone(), conv))
-            .map(with!(this => move |c| {
-                if !this.channels.borrow().contains_key(&c.id) {
-                    let ch = Channel::new(&c.time.with_timezone(&this.timezone), &c.id, &c.name, c.ctype);
-                    this.convlist.add(ch.channel_row());
-                    this.channels.borrow_mut().insert(c.id, ch);
-                    this.convlist.show_all()
+        let future = self.pool_act.spawn(self.user(user_id.clone()))
+            .map(with!(this => move |u| {
+                if let Some(user) = u {
+                    if !this.channels.borrow().contains_key(&conv.id) {
+                        this.ensure_user_res(&user);
+                        let mut res = this.res.borrow_mut();
+                        let mut usr = res.user_mut(&user.id).unwrap();
+                        let     chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
+                        this.convlist.add(chn.channel_row());
+                        this.channels.borrow_mut().insert(conv.id, chn);
+                        this.convlist.show_all()
+                    }
+                } else {
+                    warn!(this.log, "user not found"; "id" => user_id.to_string());
+                    return ()
                 }
             }))
             .map_err(with!(this => move |e| {
@@ -761,61 +775,37 @@ impl Coax {
 
     fn on_members_add(&self, app: &gtk::Application, time: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>) {
         debug!(self.log, "on_members_add"; "conv" => cid.to_string());
-        let local_time = time.with_timezone(&self.timezone);
-        match self.channels.borrow_mut().entry(cid.clone()) {
-            Entry::Vacant(e) => {
-                if let Some(Io::Online(ref mut a)) = *self.actor.lock().unwrap() {
-                    let conv =
-                        match a.resolve_conversation(&cid) {
-                            Ok(Some(c)) => c,
-                            Ok(None) => {
-                                let details = cid.to_string();
-                                error!(self.log, "conversation not found"; "id" => details);
-                                show_message(app, MessageType::Error, "Conversation not found", "", Some(&details));
-                                return ()
-                            }
-                            Err(e) => {
-                                let details = format!("{}", e);
-                                error!(self.log, "failed to lookup conversation"; "error" => details);
-                                show_message(app, MessageType::Error, "Failed to lookup conversation", "", Some(&details));
-                                return ()
-                            }
-                        };
-                    let mut ch = Channel::new(&local_time, &cid, &conv.name, conv.ctype);
-                    for m in members {
-                        let id = m.id.as_uuid().simple().to_string();
-                        if ch.has_msg(&id) {
-                            continue
-                        }
-                        self.ensure_user_res(&m);
-                        if local_time.date() != ch.newest_date() {
-                            ch.add(Message::date(local_time.date()))
-                        }
-                        let txt = format!("{} has joined this conversation.", m.name.as_str());
-                        let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
-                        ch.push_msg(&id, msg)
-                    }
-                    self.convlist.add(ch.channel_row());
-                    e.insert(ch);
-                    self.convlist.show_all()
+        if let Some(mut ch) = self.channels.borrow_mut().get_mut(&cid) {
+            let local_time = time.with_timezone(&self.timezone);
+            for m in members {
+                let id = m.id.as_uuid().simple().to_string();
+                if ch.has_msg(&id) {
+                    continue
                 }
-            }
-            Entry::Occupied(mut e) => {
-                for m in members {
-                    let id = m.id.as_uuid().simple().to_string();
-                    if e.get_mut().has_msg(&id) {
-                        continue
-                    }
-                    self.ensure_user_res(&m);
-                    if local_time.date() != e.get().newest_date() {
-                        e.get_mut().add(Message::date(local_time.date()))
-                    }
-                    let txt = format!("{} has joined this conversation.", m.name.as_str());
-                    let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
-                    e.get_mut().push_msg(&id, msg);
-                    self.convlist.invalidate_sort()
+                self.ensure_user_res(&m);
+                if local_time.date() != ch.newest_date() {
+                    ch.add(Message::date(local_time.date()))
                 }
+                let txt = format!("{} has joined this conversation.", m.name.as_str());
+                let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
+                ch.push_msg(&id, msg);
+                self.convlist.invalidate_sort()
             }
+        } else {
+            let this   = self.clone();
+            let future = self.pool_act.spawn(self.conversation(&cid))
+                .map(with!(this, app  => move |conv| {
+                    if let Some(c) = conv {
+                        this.on_conversation(c);
+                        this.on_members_add(&app, time, cid, members)
+                    } else {
+                        error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
+                    }
+                }))
+                .map_err(with!(this => move |e| {
+                    error!(this.log, "on_message error"; "error" => format!("{}", e))
+                }));
+            self.futures.send(Box::new(future)).unwrap()
         }
     }
 
@@ -1292,31 +1282,15 @@ impl Coax {
         }))
     }
 
-    fn process_one2one(&self, me: UserId, mut c: Conversation<'static>) -> impl Future<Item=Conversation<'static>, Error=Error> {
-        trace!(self.log, "process one2one conversation future");
+    fn user(&self, id: UserId) -> impl Future<Item=Option<User<'static>>, Error=Error> {
+        trace!(self.log, "user future");
         let actor = self.actor.clone();
         futures::lazy(move || {
-            let uid =
-                if let Some(uid) = c.members.iter().filter(|m| **m != me).next().cloned() {
-                    uid
-                } else {
-                    return Ok(c)
-                };
             let mut act = actor.lock().unwrap();
             match *act {
-                Some(Io::Offline(ref mut a)) => {
-                    if let Some(u) = a.load_user(&uid)? {
-                        c.set_name(u.name)
-                    }
-                    Ok(c)
-                }
-                Some(Io::Online(ref mut a)) => {
-                    if let Some(u) = a.resolve_user(&uid)? {
-                        c.set_name(u.name)
-                    }
-                    Ok(c)
-                }
-                _ => Err(Error::Message("invalid app state"))
+                Some(Io::Offline(ref mut a)) => a.load_user(&id),
+                Some(Io::Online(ref mut a))  => a.resolve_user(&id),
+                _                            => Err(Error::Message("invalid app state"))
             }
         })
     }

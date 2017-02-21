@@ -504,7 +504,7 @@ impl Coax {
                 this.hide_info();
                 this.ensure_user_res(&*this.me.borrow());
                 let mut res = this.res.borrow_mut();
-                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().pict();
+                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().icon_large();
             }))
             .map_err(with!(app, this => move |e| {
                 this.hide_info();
@@ -595,7 +595,7 @@ impl Coax {
             .and_then(with!(this => move |_| {
                 this.ensure_user_res(&*this.me.borrow());
                 let mut res = this.res.borrow_mut();
-                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().pict();
+                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().icon_large();
                 this.pool_rem.spawn(this.resend_messages())
             }))
             .map_err(with!(app => move |e| {

@@ -643,8 +643,7 @@ impl Coax {
                 self.ensure_user_res(&m.user);
                 let mtime = m.time.with_timezone(&self.timezone);
                 if mtime.date() != ch.newest_date() {
-                    let date = ch.newest_date();
-                    ch.add(Message::date(date))
+                    ch.add(Message::date(mtime.date()))
                 }
                 let mut res = self.res.borrow_mut();
                 let mut usr = res.user_mut(&m.user.id).unwrap();
@@ -790,8 +789,7 @@ impl Coax {
                         }
                         self.ensure_user_res(&m);
                         if local_time.date() != ch.newest_date() {
-                            let date = ch.newest_date();
-                            ch.add(Message::date(date))
+                            ch.add(Message::date(local_time.date()))
                         }
                         let txt = format!("{} has joined this conversation.", m.name.as_str());
                         let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
@@ -810,8 +808,7 @@ impl Coax {
                     }
                     self.ensure_user_res(&m);
                     if local_time.date() != e.get().newest_date() {
-                        let date = e.get().newest_date();
-                        e.get_mut().add(Message::date(date))
+                        e.get_mut().add(Message::date(local_time.date()))
                     }
                     let txt = format!("{} has joined this conversation.", m.name.as_str());
                     let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
@@ -974,8 +971,8 @@ impl Coax {
                         };
                     if msg_index != -1 {
                         if loc_time.date() != ch.newest_date() {
-                            let date  = ch.newest_date();
-                            ch.insert(msg_index, Message::date(date))
+                            ch.insert(msg_index, Message::date(loc_time.date()));
+                            ch.set_newest_date(loc_time.date())
                         }
                         ch.update_time(&loc_time);
                         this.convlist.invalidate_sort()

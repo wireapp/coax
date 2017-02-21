@@ -197,6 +197,10 @@ impl Channel {
         self.date_upper
     }
 
+    pub fn set_newest_date(&mut self, d: Date<Local>) {
+        self.date_upper = d
+    }
+
     pub fn update_time(&self, dt: &DateTime<Local>) {
         self.set_time(dt);
         self.update_tstamp(dt.timestamp())

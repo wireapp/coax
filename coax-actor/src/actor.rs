@@ -17,7 +17,7 @@ use coax_api::message::send;
 use coax_api::prekeys::{PreKey, LastPreKey};
 use coax_api::token::{AccessToken, Credentials};
 use coax_api::types::{Label, Password, ClientId, UserId, ConvId, Name};
-use coax_api::user::{self, ConnectStatus, User as ApiUser, AssetKey, AssetToken};
+use coax_api::user::{self, Connection as UserConnection, ConnectStatus, User as ApiUser, AssetKey, AssetToken};
 use coax_api_proto::GenericMessage;
 use coax_client;
 use coax_client::error::{Error as ClientError, Void};
@@ -502,12 +502,14 @@ impl Actor<Online> {
     ///
     /// If the user is found in local storage it is returned right away,
     /// otherwise we try to get the information from back-end and save it locally.
-    pub fn resolve_user<'a>(&mut self, id: &UserId) -> Result<Option<User<'a>>, Error> {
-        if let Some(usr) = self.state.user.dbase.user(id)? {
-            if usr.deleted {
-                return Ok(None)
-            } else {
-                return Ok(Some(usr))
+    pub fn resolve_user<'a>(&mut self, id: &UserId, allow_local: bool) -> Result<Option<User<'a>>, Error> {
+        if allow_local {
+            if let Some(usr) = self.state.user.dbase.user(id)? {
+                if usr.deleted {
+                    return Ok(None)
+                } else {
+                    return Ok(Some(usr))
+                }
             }
         }
         let usr = error::retry3x(|r: Option<React<()>>| {
@@ -579,49 +581,91 @@ impl Actor<Online> {
         if let Some(c) = self.state.user.dbase.conversation(id)? {
             return Ok(Some(c))
         }
+
+        enum LookupResult<'a> {
+            Found(api::conv::Conversation<'a>),
+            NotFound,
+            PastMember
+        }
+
         let conv = error::retry3x(|r: Option<React<()>>| {
             self.react(r)?;
             let creds = self.state.user.creds.lock().unwrap();
-            let conv  = self.state.client
-                .conversation(id, &creds.token)?
-                .and_then(|c| {
-                    if c.members.me.current {
-                        Some(c)
-                    } else {
-                        None
-                    }
-                });
-            Ok(conv)
-        })?;
-        if let Some(mut c) = conv {
-            self.resolve_user(&c.creator)?;
-            c.members.others.retain(|m| m.current);
-            let mut nobody_left = true;
-            for m in &c.members.others {
-                if m.id == self.me().id {
-                    continue
+            if let Some(c) = self.state.client.conversation(id, &creds.token)? {
+                if c.members.me.current {
+                    Ok(LookupResult::Found(c))
+                } else {
+                    Ok(LookupResult::PastMember)
                 }
-                nobody_left &= self.resolve_user(&m.id)?.is_none()
+            } else {
+                Ok(LookupResult::NotFound)
             }
-            if c.typ == ConvType::OneToOne && nobody_left {
-                info!(self.logger, "ignoring 1:1 conversation without peer"; "conv" => c.id.to_string());
-                return Ok(None)
+        })?;
+
+        match conv {
+            LookupResult::Found(mut c) => {
+                self.resolve_user(&c.creator, true)?;
+                c.members.others.retain(|m| m.current);
+                let mut nobody_left = true;
+                for m in &c.members.others {
+                    if m.id == self.me().id {
+                        continue
+                    }
+                    nobody_left &= self.resolve_user(&m.id, true)?.is_none()
+                }
+                if c.typ == ConvType::OneToOne && nobody_left {
+                    info!(self.logger, "ignoring 1:1 conversation without peer"; "conv" => c.id.to_string());
+                    return Ok(None)
+                }
+                let t = UTC::now();
+                self.state.user.dbase.insert_conversation(&t, &c)?;
+                Ok(Some(Conversation::from_api(t, c)))
             }
-            let t = UTC::now();
-            self.state.user.dbase.insert_conversation(&t, &c)?;
-            Ok(Some(Conversation::from_api(t, c)))
-        } else {
-            info!(self.logger, "conversation not found"; "id" => id.to_string());
-            Ok(None)
+            LookupResult::NotFound => {
+                info!(self.logger, "conversation not found"; "id" => id.to_string());
+                Ok(None)
+            }
+            LookupResult::PastMember => {
+                debug!(self.logger, "past member of conversation"; "id" => id.to_string());
+                Ok(None)
+            }
         }
     }
 
+    /// Resolve all conversations (up to 1000).
     pub fn resolve_conversations(&mut self) -> Result<(), Error> {
         debug!(self.logger, "resolving conversations");
-        for id in self.conversation_ids(256, None)?.value { // TODO
-            if let Some(c) = self.resolve_conversation(&id)? {
-                self.state.bcast.send(Pkg::Conversation(c)).unwrap()
+        let mut page  = self.conversation_ids(256, None)?;
+        let mut total = page.value.len();
+        loop {
+            debug!(self.logger, "page of conversation ids"; "len" => page.value.len());
+            for id in &page.value {
+                self.resolve_conversation(id)?;
             }
+            if !page.has_more || page.value.is_empty() || total > 1000 { // TODO
+                break
+            }
+            page   = self.conversation_ids(256, page.value.last())?;
+            total += page.value.len()
+        }
+        Ok(())
+    }
+
+    /// Resolve all user connections.
+    pub fn resolve_user_connections(&mut self) -> Result<(), Error> {
+        debug!(self.logger, "resolving user connections");
+        let mut page = self.user_connections(256, None)?;
+        loop {
+            debug!(self.logger, "page of user connections"; "len" => page.value.len());
+            for c in &page.value {
+                if self.resolve_user(&c.to, false)?.is_some() {
+                    self.state.user.dbase.insert_connection(c)?
+                }
+            }
+            if !page.has_more || page.value.is_empty() {
+                break
+            }
+            page = self.user_connections(256, page.value.last().map(|c| &c.to))?
         }
         Ok(())
     }
@@ -704,6 +748,16 @@ impl Actor<Online> {
             self.react(r)?;
             let creds = self.state.user.creds.lock().unwrap();
             self.state.client.conversations(n, c, &creds.token).map_err(From::from)
+        })
+    }
+
+    /// Get all user connections.
+    pub fn user_connections<'a>(&mut self, n: usize, u: Option<&UserId>) -> Result<api::Page<Vec<UserConnection<'a>>>, Error> {
+        debug!(self.logger, "lookup user connections");
+        error::retry3x(|r: Option<React<()>>| {
+            self.react(r)?;
+            let creds = self.state.user.creds.lock().unwrap();
+            self.state.client.user_connections(n, u, &creds.token).map_err(From::from)
         })
     }
 
@@ -991,7 +1045,7 @@ impl Actor<Online> {
     fn on_user_connection(&mut self, e: UserEvent<'static>) -> Result<(), Error> {
         if let UserEvent::Connect(_, c) = e {
             debug!(self.logger, "user connection"; "to" => c.to.to_string(), "status" => c.status.as_str());
-            if let Some(usr) = self.resolve_user(&c.to)? {
+            if let Some(usr) = self.resolve_user(&c.to, true)? {
                 self.state.user.dbase.insert_connection(&c)?;
                 self.state.bcast.send(Pkg::Contact(usr, Connection::from_api(c))).unwrap()
             }
@@ -1010,9 +1064,9 @@ impl Actor<Online> {
             "id"      => conv.id.to_string(),
             "creator" => conv.creator.to_string(),
             "type"    => format!("{:?}", conv.typ));
-        if conv.creator == self.me().id || self.resolve_user(&conv.creator)?.is_some() {
+        if conv.creator == self.me().id || self.resolve_user(&conv.creator, true)?.is_some() {
             for m in &conv.members.others {
-                self.resolve_user(&m.id)?;
+                self.resolve_user(&m.id, true)?;
             }
             self.state.user.dbase.insert_conversation(&e.time, &conv)?;
             let pkg = Pkg::Conversation(Conversation::from_api(e.time, conv));
@@ -1041,7 +1095,7 @@ impl Actor<Online> {
                 m.push(self.me().clone());
                 continue
             }
-            if let Some(usr) = self.resolve_user(&u)? {
+            if let Some(usr) = self.resolve_user(&u, true)? {
                 self.state.user.dbase.insert_members(&e.id, &[&u])?;
                 {
                     let mid = ConvId::rand().to_string();
@@ -1065,7 +1119,7 @@ impl Actor<Online> {
             };
         debug!(self.logger, "new message"; "conversation" => e.id.to_string());
         let usr =
-            if let Some(usr) = self.resolve_user(&e.from)? {
+            if let Some(usr) = self.resolve_user(&e.from, true)? {
                 usr
             } else {
                 warn!(self.logger, "unknown sender"; "user" => e.from.to_string());

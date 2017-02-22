@@ -27,7 +27,7 @@ impl User {
         let buf = loader.get_pixbuf().unwrap(); // TODO
         self.icon_small  = buf.scale_simple(32, 32, InterpType::Bilinear).unwrap(); // TODO
         self.icon_medium = buf.scale_simple(48, 48, InterpType::Bilinear).unwrap(); // TODO
-        self.icon_large  = buf.scale_simple(120, 120, InterpType::Bilinear).unwrap(); // TODO
+        self.icon_large  = buf.scale_simple(200, 200, InterpType::Bilinear).unwrap(); // TODO
         for p in self.small_icons.iter().filter(|p| !p.is_null()) {
             let img = unsafe {
                 gtk::Image::from_glib_none(*p as *mut gtk_sys::GtkImage)
@@ -84,7 +84,7 @@ impl<'a, 'b> From<&'b coax_data::User<'a>> for User {
         let buf = Pixbuf::new_from_resource("/coax/icons/user.png").unwrap();
         let ico32  = buf.scale_simple(32, 32, InterpType::Bilinear).unwrap(); // TODO
         let ico48  = buf.scale_simple(48, 48, InterpType::Bilinear).unwrap(); // TODO
-        let ico120 = buf.scale_simple(120, 120, InterpType::Bilinear).unwrap(); // TODO
+        let ico120 = buf.scale_simple(200, 200, InterpType::Bilinear).unwrap(); // TODO
         User {
             id:           u.id.clone(),
             name:         ffi::escape(u.name.as_str()).to_string_lossy().into_owned(),

@@ -9,26 +9,35 @@ use res;
 
 #[derive(Clone)]
 pub struct Contacts {
-    list:  gtk::ListBox,
-    view:  gtk::ScrolledWindow,
-    model: FnvHashMap<UserId, Contact>,
-    init:  bool
+    list:    gtk::ListBox,
+    refresh: gtk::Button,
+    view:    gtk::ScrolledWindow,
+    model:   FnvHashMap<UserId, Contact>,
+    init:    bool
 }
 
 impl Contacts {
     pub fn new() -> Contacts {
+        let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+
         let lst = gtk::ListBox::new();
         lst.set_vexpand(true);
         lst.set_hexpand(true);
+        vbox.add(&lst);
+
+        let refresh = gtk::Button::new_with_label("Reload all contacts");
+        refresh.set_sensitive(false);
+        vbox.add(&refresh);
 
         let win = gtk::ScrolledWindow::new(None, None);
-        win.add(&lst);
+        win.add(&vbox);
 
         Contacts {
-            list:  lst,
-            view:  win,
-            model: FnvHashMap::default(),
-            init:  false
+            list:    lst,
+            refresh: refresh,
+            view:    win,
+            model:   FnvHashMap::default(),
+            init:    false
         }
     }
 
@@ -55,6 +64,13 @@ impl Contacts {
     pub fn set_init(&mut self) {
         self.init = true
     }
+
+    pub fn set_refresh_action<F>(&self, f: F)
+        where F: Fn() + 'static
+    {
+        self.refresh.connect_clicked(move |_| f());
+        self.refresh.set_sensitive(true)
+    }
 }
 
 
@@ -73,25 +89,30 @@ impl Contact {
         let row = gtk::ListBoxRow::new();
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
-        grid.set_margin_top(6);
         grid.set_margin_right(6);
-        grid.set_margin_bottom(6);
-        grid.set_row_spacing(6);
+        grid.set_row_spacing(12);
 
         let name = gtk::Label::new(None);
-        name.set_markup(&format!("<big><b>{}</b></big>", usr.name));
+        name.set_markup(&format!("<span size=\"x-large\"><b>{}</b></span>", usr.name));
+        name.set_halign(Align::Center);
+        name.set_hexpand(true);
+        name.set_margin_top(12);
         grid.attach(&name, 0, 0, 1, 1);
-
-        let img = usr.icon_large();
-        img.set_margin_left(6);
-        img.set_margin_top(6);
-        img.set_margin_right(6);
-        img.set_margin_bottom(6);
-        grid.attach(&img, 0, 1, 1, 1);
 
         let status = gtk::ComboBoxText::new();
         status.set_halign(Align::Center);
-        grid.attach(&status, 0, 2, 1, 1);
+        grid.attach(&status, 0, 1, 1, 1);
+
+        let img = usr.icon_large();
+        img.set_margin_left(12);
+        img.set_margin_top(6);
+        img.set_margin_right(6);
+        img.set_margin_bottom(12);
+        img.set_halign(Align::Start);
+        grid.attach(&img, 0, 2, 1, 1);
+
+        let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+        grid.attach(&sep, 0, 3, 1, 1);
 
         grid.insert_column(1);
 

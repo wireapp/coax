@@ -172,7 +172,7 @@ impl Coax {
         let show_contacts: gtk::ToolButton = self.builder.get_object("show-cons-button").unwrap();
         show_contacts.connect_clicked(with!(this, app => move |_| {
             if !this.contacts.borrow().is_init() {
-                this.load_contacts(&app)
+                this.load_local_contacts(&app)
             }
             this.send_btn.set_sensitive(false);
             this.convlist.unselect_all();
@@ -180,6 +180,11 @@ impl Coax {
             this.mainview.insert_row(0);
             this.mainview.attach(this.contacts.borrow().contact_view(), 0, 0, 1, 1);
             this.mainview.show_all()
+        }));
+
+        self.contacts.borrow().set_refresh_action(with!(this, app => move || {
+            this.load_remote_contacts(&app);
+            this.load_remote_conversations(&app)
         }));
 
         let header_builder = Builder::new_from_string(include_str!("gtk/header.ui"));
@@ -472,12 +477,12 @@ impl Coax {
                     let     w = i.connect()?;
                     *inbox.lock().unwrap() = Some(i.fork(w));
                     *sync.lock().unwrap() = Some(a.clone()?);
-                    Ok(a.me().clone())
+                    Ok((a.me().clone(), a.is_new_client()))
                 } else {
                     Err(Error::Message("invalid app state"))
                 }
             })
-            .map(with!(this, app => move |me| {
+            .map(with!(this, app => move |(me, is_new_client)| {
                 let name = ffi::escape(me.name.as_str()).to_string_lossy();
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.res.borrow_mut().add_user(&me);
@@ -494,8 +499,12 @@ impl Coax {
                     }
                     Continue(true)
                 }));
-                this.load_local_conversations(&app);
-                this.load_remote_conversations(&app)
+                if is_new_client {
+                    this.load_remote_conversations(&app);
+                    this.load_remote_contacts(&app)
+                } else {
+                    this.load_local_conversations(&app)
+                }
             }))
             .and_then(with!(this => move |()| {
                 this.pool_rem.spawn(this.notifications(true))
@@ -698,6 +707,11 @@ impl Coax {
             return ()
         }
 
+        if conv.ctype == ConvType::SelfConv {
+            debug!(self.log, "ignoring self conversation"; "conv" => conv.id.to_string());
+            return ()
+        }
+
         if conv.ctype == ConvType::Group {
             let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name);
             self.convlist.add(ch.channel_row());
@@ -729,7 +743,7 @@ impl Coax {
             };
 
         let this   = self.clone();
-        let future = self.pool_act.spawn(self.user(user_id.clone()))
+        let future = self.pool_act.spawn(self.user(user_id.clone(), true))
             .map(with!(this => move |u| {
                 if let Some(user) = u {
                     if !this.channels.borrow().contains_key(&conv.id) {
@@ -832,7 +846,7 @@ impl Coax {
                                 return Ok(Data::Invalid(conn.status))
                             },
                         None => {
-                            if let Some(usr) = a.resolve_user(&u)? {
+                            if let Some(usr) = a.resolve_user(&u, true)? {
                                 a.new_connection(&usr, n.replicate(), "Connection request")?;
                                 return Ok(Data::Sent)
                             } else {
@@ -1005,15 +1019,14 @@ impl Coax {
             self.pool_act.spawn_fn(move || {
                 let mut act = actor.lock().unwrap();
                 if let Some(Io::Online(ref mut a)) = *act {
-                    if a.is_new_client() {
-                        a.resolve_conversations()
-                    } else {
-                        Ok(())
-                    }
+                    a.resolve_conversations()
                 } else {
                     Err(Error::Message("invalid app state"))
                 }
             })
+            .map(with!(this, app => move |()| {
+                this.load_local_conversations(&app)
+            }))
             .map_err(with!(app => move |e| {
                 error!(this.log, "failed to load remote conversations"; "error" => format!("{}", e));
                 show_error(&app, e, "Failed to load remote conversations", "")
@@ -1070,10 +1083,10 @@ impl Coax {
         self.futures.send(Box::new(future)).unwrap()
     }
 
-    fn load_contacts(&self, app: &gtk::Application) {
+    fn load_local_contacts(&self, app: &gtk::Application) {
         trace!(self.log, "load contacts");
         let this   = self.clone();
-        let future = self.pool_act.spawn(self.contacts())
+        let future = self.pool_act.spawn(self.local_contacts())
             .map(with!(this, app => move |cc| {
                 for (u, c) in cc {
                     this.on_contact(&app, u, c)
@@ -1084,6 +1097,29 @@ impl Coax {
             .map_err(with!(app => move |e| {
                 error!(this.log, "failed to load contacts"; "error" => format!("{}", e));
                 show_error(&app, e, "Failed to load contacts", "")
+            }));
+        self.futures.send(Box::new(future)).unwrap()
+    }
+
+    fn load_remote_contacts(&self, app: &gtk::Application) {
+        debug!(self.log, "load remote contacts");
+        let this   = self.clone();
+        let actor  = self.actor.clone();
+        let future =
+            self.pool_act.spawn_fn(move || {
+                let mut act = actor.lock().unwrap();
+                if let Some(Io::Online(ref mut a)) = *act {
+                    a.resolve_user_connections()
+                } else {
+                    Err(Error::Message("invalid app state"))
+                }
+            })
+            .map(with!(this, app => move |()| {
+                this.load_local_contacts(&app)
+            }))
+            .map_err(with!(app => move |e| {
+                error!(this.log, "failed to load remote contacts"; "error" => format!("{}", e));
+                show_error(&app, e, "Failed to load remote contacts", "")
             }));
         self.futures.send(Box::new(future)).unwrap()
     }
@@ -1203,7 +1239,7 @@ impl Coax {
             let mut act = actor.lock().unwrap();
             match *act {
                 Some(Io::Online(ref mut a)) =>
-                    if let Some(usr) = a.resolve_user(&u)? {
+                    if let Some(usr) = a.resolve_user(&u, true)? {
                         a.load_user_icon(&usr)
                     } else {
                         Ok(Vec::new())
@@ -1282,15 +1318,15 @@ impl Coax {
         }))
     }
 
-    fn user(&self, id: UserId) -> impl Future<Item=Option<User<'static>>, Error=Error> {
+    fn user(&self, id: UserId, allow_local: bool) -> impl Future<Item=Option<User<'static>>, Error=Error> {
         trace!(self.log, "user future");
         let actor = self.actor.clone();
         futures::lazy(move || {
             let mut act = actor.lock().unwrap();
             match *act {
-                Some(Io::Offline(ref mut a)) => a.load_user(&id),
-                Some(Io::Online(ref mut a))  => a.resolve_user(&id),
-                _                            => Err(Error::Message("invalid app state"))
+                Some(Io::Offline(ref mut a)) if allow_local => a.load_user(&id),
+                Some(Io::Online(ref mut a))                 => a.resolve_user(&id, allow_local),
+                _                                           => Err(Error::Message("invalid app state"))
             }
         })
     }
@@ -1322,8 +1358,8 @@ impl Coax {
         })
     }
 
-    fn contacts(&self) -> impl Future<Item=Vec<(User<'static>, Connection)>, Error=Error> {
-        trace!(self.log, "contacts future");
+    fn local_contacts(&self) -> impl Future<Item=Vec<(User<'static>, Connection)>, Error=Error> {
+        trace!(self.log, "local contacts future");
         let actor = self.actor.clone();
         futures::lazy(move || {
             let mut act = actor.lock().unwrap();

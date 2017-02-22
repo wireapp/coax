@@ -283,7 +283,7 @@ impl<'a> Client<'a> {
     }
 
     /// Lookup connections to user [`GET /connections`]
-    pub fn user_connections<'b>(&mut self, len: usize, start: Option<&UserId>, t: &AccessToken) -> Result<user::Connections<'b>, Error<Void>> {
+    pub fn user_connections<'b>(&mut self, len: usize, start: Option<&UserId>, t: &AccessToken) -> Result<Page<Vec<user::Connection<'b>>>, Error<Void>> {
         info!(self.log, "listing user connections");
         let mut url = self.url.clone();
         url.set_path("/connections");
@@ -293,11 +293,14 @@ impl<'a> Client<'a> {
         }
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
-        let tkn  = self.rpc.send(tkn, Method::Get, &self.url, hdrs)?;
+        let tkn  = self.rpc.send(tkn, Method::Get, &url, hdrs)?;
         let tkn  = self.rpc.recv_header(tkn)?;
         let json_resp = is_json(self.response());
         match self.response().status() {
-            200 if json_resp => self.recv_json(tkn).map_err(From::from),
+            200 if json_resp =>
+                self.recv_json(tkn)
+                    .map(|x: user::connect::get::Connections<'b>| x.0)
+                    .map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
                 error!(self.log, "error getting connections"; "status" => num, "error" => format!("{:?}", e));
@@ -591,7 +594,10 @@ impl<'a> Client<'a> {
         let tkn  = self.rpc.recv_header(tkn)?;
         let json_resp = is_json(self.response());
         match self.response().status() {
-            200 if json_resp => self.recv_json(tkn).map(|x: conv::get::ConvIds| x.0).map_err(From::from),
+            200 if json_resp =>
+                self.recv_json(tkn)
+                    .map(|x: conv::get::ConvIds| x.0)
+                    .map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
                 error!(self.log, "conversation lookup error"; "status" => num, "error" => format!("{:?}", e));

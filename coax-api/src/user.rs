@@ -372,27 +372,6 @@ impl<'a> FromJson for Connection<'a> {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Connections<'a> {
-    pub list: Cow<'a, [Connection<'a>]>,
-    pub more: bool
-}
-
-impl<'a> FromJson for Connections<'a> {
-    fn decode<I: Iterator<Item=char>>(d: &mut Decoder<I>) -> DecodeResult<Self> {
-        let mut b = [0; 24];
-        let mut u = Utf8Buffer::new(&mut b);
-        object! {
-            let decoder = d;
-            let buffer  = &mut u;
-            Connections {
-                list: req. "connections" => array!(d, d.from_json()).map(Cow::Owned),
-                more: req. "has_more"    => d.from_json()
-            }
-        }
-    }
-}
-
 // User identity ////////////////////////////////////////////////////////////
 
 #[derive(Clone, Debug)]
@@ -708,5 +687,29 @@ pub mod connect {
                 }
             }
         }
+    }
+
+    pub mod get {
+
+        use json::{FromJson, Decoder, DecodeResult, Utf8Buffer};
+        use super::super::Connection;
+        use types::*;
+
+        pub struct Connections<'a>(pub Page<Vec<Connection<'a>>>);
+
+        impl<'a> FromJson for Connections<'a> {
+            fn decode<I: Iterator<Item=char>>(d: &mut Decoder<I>) -> DecodeResult<Self> {
+                let mut b = [0; 24];
+                let mut u = Utf8Buffer::new(&mut b);
+                let data = extract! {
+                    let decoder = d;
+                    let buffer  = &mut u;
+                    elements: req. Vec<Connection<'static>> = "connections" => array!(d, d.from_json()),
+                    has_more: req. bool                     = "has_more"    => d.from_json()
+                }?;
+                Ok(Connections(Page::new(data.elements, data.has_more)))
+            }
+        }
+
     }
 }

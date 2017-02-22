@@ -90,19 +90,20 @@ impl Database {
         }
     }
 
-    /// Insert new user.
+    /// Insert new user or update existing record.
     pub fn insert_user(&self, u: &api::user::User) -> Result<(), Error> {
         use schema::users::dsl::*;
         debug!(self.logger, "insert"; "user" => u.id.to_string());
         let nu = NewUser::from_api(u);
         self.conn.transaction(|| {
-            // TODO: upsert
             match users.find(u.id.as_slice()).first::<RawUser>(&self.conn) {
                 Err(result::Error::NotFound) => {
                     insert(&nu).into(schema::users::table).execute(&self.conn)?;
                 }
                 Err(e) => return Err(e),
-                _      => ()
+                Ok(_)  => {
+                    update(users.find(u.id.as_slice())).set(&nu).execute(&self.conn)?;
+                }
             }
             Ok(())
         }).map_err(From::from)

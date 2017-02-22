@@ -65,12 +65,14 @@ impl Channel {
         grid.attach(&name_label, 1, 0, 1, 2);
 
         let time_label = gtk::Label::new(None);
+        time_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         time_label.set_margin_left(6);
         time_label.set_margin_top(6);
         time_label.set_margin_right(6);
         grid.attach(&time_label, 2, 0, 1, 1);
 
         let date_label = gtk::Label::new(None);
+        date_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         date_label.set_margin_left(6);
         date_label.set_margin_right(6);
         date_label.set_margin_bottom(6);
@@ -261,6 +263,7 @@ impl Message {
         grid.attach(&lbl, 1, 1, 1, 1);
 
         let time = gtk::Label::new(None);
+        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         time.set_margin_bottom(6);
         if let Some(t) = dt {
             let tstr = t.format("%T").to_string();
@@ -289,6 +292,7 @@ impl Message {
         grid.set_margin_bottom(6);
 
         let time = gtk::Label::new(None);
+        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         time.set_hexpand(true);
         time.set_halign(Align::Fill);
         let dstr = d.format("%F").to_string();

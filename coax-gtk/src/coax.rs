@@ -698,7 +698,7 @@ impl Coax {
             return ()
         }
 
-        if conv.ctype != ConvType::OneToOne {
+        if conv.ctype == ConvType::Group {
             let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name);
             self.convlist.add(ch.channel_row());
             self.channels.borrow_mut().insert(conv.id, ch);

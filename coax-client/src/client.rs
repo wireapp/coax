@@ -270,7 +270,7 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 => {
-                debug!(self.log, "connection not found"; "id" => to.to_string());
+                info!(self.log, "connection not found"; "id" => to.to_string());
                 self.drain(tkn)?;
                 Ok(None)
             }
@@ -340,8 +340,8 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 if json_resp => {
-                self.drain(tkn)?;
                 warn!(self.log, "user not found"; "id" => u.to_string());
+                self.drain(tkn)?;
                 Ok(None)
             }
             num => {
@@ -404,9 +404,9 @@ impl<'a> Client<'a> {
         let json_resp = is_json(self.response());
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
-            404 if json_resp => {
-                self.drain(tkn)?;
+            404 => {
                 warn!(self.log, "user or client not found"; "user" => u.to_string(), "client" => c.as_str());
+                self.drain(tkn)?;
                 Ok(None)
             }
             num => {
@@ -518,8 +518,8 @@ impl<'a> Client<'a> {
         let json_resp = is_json(self.response());
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
-            404 if json_resp => {
-                debug!(self.log, "client not found"; "id" => c.as_str());
+            404 => {
+                info!(self.log, "client not found"; "id" => c.as_str());
                 self.drain(tkn)?;
                 Ok(None)
             }
@@ -542,8 +542,8 @@ impl<'a> Client<'a> {
         let json_resp = is_json(self.response());
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
-            404 if json_resp => {
-                debug!(self.log, "client not found"; "user" => u.to_string(), "id" => c.as_str());
+            404 => {
+                info!(self.log, "client not found"; "user" => u.to_string(), "id" => c.as_str());
                 self.drain(tkn)?;
                 Ok(None)
             }
@@ -567,7 +567,7 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 if json_resp => {
-                debug!(self.log, "user not found"; "user" => u.to_string());
+                warn!(self.log, "user not found"; "user" => u.to_string());
                 self.drain(tkn)?;
                 Ok(Vec::new())
             }
@@ -618,7 +618,7 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 if json_resp => {
-                debug!(self.log, "conversation not found"; "id" => id.to_string());
+                info!(self.log, "conversation not found"; "id" => id.to_string());
                 self.drain(tkn)?;
                 Ok(None)
             }
@@ -700,6 +700,7 @@ impl<'a> Client<'a> {
                 Ok(Some(n.id))
             }
             404 => {
+                debug!(self.log, "no last notification id");
                 self.drain(tkn)?;
                 Ok(None)
             }

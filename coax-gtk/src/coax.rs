@@ -62,7 +62,7 @@ pub struct Coax {
     channels: Rc<RefCell<HashMap<ConvId, Channel>>>,
     contacts: Rc<RefCell<Contacts>>,
     me:       Rc<RefCell<User<'static>>>,
-    me_pict:  Rc<RefCell<gtk::Image>>,
+    me_box:   Rc<RefCell<gtk::Box>>,
     res:      Rc<RefCell<res::Resources>>,
     actor:    Arc<Mutex<Option<Io>>>,
     sync:     Arc<Mutex<Option<Actor<Online>>>>,
@@ -133,7 +133,7 @@ impl Coax {
             contacts: Rc::new(RefCell::new(Contacts::new())),
             channels: Rc::new(RefCell::new(HashMap::new())),
             me:       Rc::new(RefCell::new(usr)),
-            me_pict:  Rc::new(RefCell::new(gtk::Image::new())),
+            me_box:   Rc::new(RefCell::new(gtk::Box::new(gtk::Orientation::Vertical, 0))),
             res:      Rc::new(RefCell::new(res::Resources::new())),
             actor:    Arc::new(Mutex::new(Some(Io::Init(actor)))),
             sync:     Arc::new(Mutex::new(None)),
@@ -197,7 +197,7 @@ impl Coax {
         let profile_name: gtk::Label = header_builder.get_object("profile-name-label").unwrap();
 
         {
-            *self.me_pict.borrow_mut() = header_builder.get_object("profile-image").unwrap()
+            *self.me_box.borrow_mut() = header_builder.get_object("profile-vbox").unwrap()
         }
 
         let menu_builder = Builder::new_from_string(include_str!("gtk/button-menu.ui"));
@@ -485,8 +485,10 @@ impl Coax {
             .map(with!(this, app => move |(me, is_new_client)| {
                 let name = ffi::escape(me.name.as_str()).to_string_lossy();
                 set_subtitle(&app, Some(me.name.as_str()));
-                this.res.borrow_mut().add_user(&me);
-                this.set_user_icon(me.id.clone());
+                this.ensure_user_res(&me);
+                let mut res = this.res.borrow_mut();
+                this.me_box.borrow().add(&res.user_mut(&me.id).unwrap().icon_large());
+                this.me_box.borrow().show_all();
                 *this.me.borrow_mut() = me;
                 profile.set_markup(&format!("<big><b>{}</b></big>", name));
                 disable.set_enabled(false);
@@ -511,9 +513,8 @@ impl Coax {
             }))
             .map(with!(this => move |_| {
                 this.hide_info();
-                this.ensure_user_res(&*this.me.borrow());
-                let mut res = this.res.borrow_mut();
-                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().icon_large();
+                let id = this.me.borrow().id.clone();
+                this.set_user_icon(id)
             }))
             .map_err(with!(app, this => move |e| {
                 this.hide_info();
@@ -564,8 +565,10 @@ impl Coax {
             .map(with!(this, app => move |me| {
                 let name = ffi::escape(me.name.as_str()).to_string_lossy();
                 set_subtitle(&app, Some(me.name.as_str()));
-                this.res.borrow_mut().add_user(&me);
-                this.set_user_icon(me.id.clone());
+                this.ensure_user_res(&me);
+                let mut res = this.res.borrow_mut();
+                this.me_box.borrow().add(&res.user_mut(&me.id).unwrap().icon_large());
+                this.me_box.borrow().show_all();
                 *this.me.borrow_mut() = me;
                 profile.set_markup(&format!("<big><b>{}</b></big>", name));
                 disable.set_enabled(false);
@@ -600,12 +603,11 @@ impl Coax {
                 this.pool_rem.spawn(this.notifications(true))
             }))
             .map(with!(this => move |_| {
-                this.hide_info()
+                this.hide_info();
+                let id = this.me.borrow().id.clone();
+                this.set_user_icon(id)
             }))
             .and_then(with!(this => move |_| {
-                this.ensure_user_res(&*this.me.borrow());
-                let mut res = this.res.borrow_mut();
-                *this.me_pict.borrow_mut() = res.user_mut(&this.me.borrow().id).unwrap().icon_large();
                 this.pool_rem.spawn(this.resend_messages())
             }))
             .map_err(with!(app => move |e| {
@@ -1215,6 +1217,7 @@ impl Coax {
     fn ensure_user_res(&self, u: &User) {
         let mut res = self.res.borrow_mut();
         if !res.has_user(&u.id) {
+            debug!(self.log, "adding user resources"; "user" => u.id.to_string());
             res.add_user(u);
             self.set_user_icon(u.id.clone())
         }

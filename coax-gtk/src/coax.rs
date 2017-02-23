@@ -33,7 +33,7 @@ use gtk::prelude::*;
 use gtk::{self, Builder, Button, MenuButton, HeaderBar, Window};
 use gtk::{MessageDialog, MessageType, ButtonsType, Orientation};
 use poll::Loop;
-use profile;
+use profile::{self, ProfileView};
 use res;
 use slog::Logger;
 
@@ -62,7 +62,7 @@ pub struct Coax {
     channels: Rc<RefCell<HashMap<ConvId, Channel>>>,
     contacts: Rc<RefCell<Contacts>>,
     me:       Rc<RefCell<User<'static>>>,
-    me_box:   Rc<RefCell<gtk::Box>>,
+    me_box:   Rc<RefCell<gtk::Popover>>,
     res:      Rc<RefCell<res::Resources>>,
     actor:    Arc<Mutex<Option<Io>>>,
     sync:     Arc<Mutex<Option<Actor<Online>>>>,
@@ -133,7 +133,7 @@ impl Coax {
             contacts: Rc::new(RefCell::new(Contacts::new())),
             channels: Rc::new(RefCell::new(HashMap::new())),
             me:       Rc::new(RefCell::new(usr)),
-            me_box:   Rc::new(RefCell::new(gtk::Box::new(gtk::Orientation::Vertical, 0))),
+            me_box:   Rc::new(RefCell::new(gtk::Popover::new(None : Option<&gtk::Label>))),
             res:      Rc::new(RefCell::new(res::Resources::new())),
             actor:    Arc::new(Mutex::new(Some(Io::Init(actor)))),
             sync:     Arc::new(Mutex::new(None)),
@@ -194,10 +194,8 @@ impl Coax {
         let profile_menu: gtk::MenuButton = header_builder.get_object("profile-menu").unwrap();
         profile_menu.set_sensitive(false);
 
-        let profile_name: gtk::Label = header_builder.get_object("profile-name-label").unwrap();
-
         {
-            *self.me_box.borrow_mut() = header_builder.get_object("profile-vbox").unwrap()
+            *self.me_box.borrow_mut() = header_builder.get_object("profile-popover").unwrap()
         }
 
         let menu_builder = Builder::new_from_string(include_str!("gtk/button-menu.ui"));
@@ -207,7 +205,7 @@ impl Coax {
         // Open menu action
 
         let open = SimpleAction::new("open", None);
-        open.connect_activate(with!(this, app, window, profile_name, profile_menu, conv_bar => move |open, _| {
+        open.connect_activate(with!(this, app, window, profile_menu, conv_bar => move |open, _| {
             let builder = Builder::new_from_string(include_str!("gtk/open-account.ui"));
             let notebook: gtk::Notebook = builder.get_object("open-notebook").unwrap();
             let dialog: Window = builder.get_object("open-account-window").unwrap();
@@ -242,22 +240,22 @@ impl Coax {
                 })
             };
 
-            submit.connect_clicked(with!(this, app, open, dialog, profile_name, profile_menu, conv_bar => move |_| {
+            submit.connect_clicked(with!(this, app, open, dialog, profile_menu, conv_bar => move |_| {
                 dialog.hide();
                 let enable = vec![profile_menu.clone().upcast::<gtk::Widget>(), conv_bar.clone().upcast::<gtk::Widget>()];
                 match notebook.get_current_page() {
                     Some(0) => {
                         let row = from_some!(profiles_list.get_selected_row());
                         let id = ffi::get_data(&row, &ffi::KEY_ID);
-                        with! { profile_name, open =>
-                            this.on_profile(&app, profile_name, open, enable, id.cloned())
+                        with! { open =>
+                            this.on_profile(&app, open, enable, id.cloned())
                         }
                     }
                     Some(1) => {
                         let email = login_email.get_text().unwrap_or(String::new());
                         let pass = login_pass.get_text().unwrap_or(String::new());
-                        with! { profile_name, open =>
-                            this.on_login(&app, profile_name, open, enable, Email::new(email), Password::new(pass))
+                        with! { open =>
+                            this.on_login(&app, open, enable, Email::new(email), Password::new(pass))
                         }
                     }
                     Some(2) => {
@@ -442,7 +440,7 @@ impl Coax {
         self.futures.send(Box::new(future)).unwrap()
     }
 
-    fn on_login(&self, app: &gtk::Application, profile: gtk::Label, disable: SimpleAction, enable: Vec<gtk::Widget>, e: Email<'static>, p: Password<'static>) {
+    fn on_login(&self, app: &gtk::Application, disable: SimpleAction, enable: Vec<gtk::Widget>, e: Email<'static>, p: Password<'static>) {
         debug!(self.log, "on_login"; "e-mail" => e.as_str());
         let (bcast_tx, bcast_rx) = std::sync::mpsc::channel();
 
@@ -483,14 +481,12 @@ impl Coax {
                 }
             })
             .map(with!(this, app => move |(me, is_new_client)| {
-                let name = ffi::escape(me.name.as_str()).to_string_lossy();
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
                 let mut res = this.res.borrow_mut();
-                this.me_box.borrow().add(&res.user_mut(&me.id).unwrap().icon_large());
-                this.me_box.borrow().show_all();
+                let prof = ProfileView::new(res.user_mut(&me.id).unwrap());
+                this.me_box.borrow().add(prof.vbox());
                 *this.me.borrow_mut() = me;
-                profile.set_markup(&format!("<big><b>{}</b></big>", name));
                 disable.set_enabled(false);
                 for e in &enable {
                     e.set_sensitive(true)
@@ -525,7 +521,7 @@ impl Coax {
         self.futures.send(Box::new(future)).unwrap()
     }
 
-    fn on_profile(&self, app: &gtk::Application, profile: gtk::Label, disable: SimpleAction, enable: Vec<gtk::Widget>, uid: Option<UserId>) {
+    fn on_profile(&self, app: &gtk::Application, disable: SimpleAction, enable: Vec<gtk::Widget>, uid: Option<UserId>) {
         debug!(self.log, "on_profile"; "user" => uid.as_ref().map(UserId::to_string).unwrap_or(String::new()));
         let user_id =
             if let Some(u) = uid {
@@ -563,14 +559,12 @@ impl Coax {
                 }
             }))
             .map(with!(this, app => move |me| {
-                let name = ffi::escape(me.name.as_str()).to_string_lossy();
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
                 let mut res = this.res.borrow_mut();
-                this.me_box.borrow().add(&res.user_mut(&me.id).unwrap().icon_large());
-                this.me_box.borrow().show_all();
+                let prof = ProfileView::new(res.user_mut(&me.id).unwrap());
+                this.me_box.borrow().add(prof.vbox());
                 *this.me.borrow_mut() = me;
-                profile.set_markup(&format!("<big><b>{}</b></big>", name));
                 disable.set_enabled(false);
                 for e in &enable {
                     e.set_sensitive(true)

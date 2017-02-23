@@ -50,7 +50,6 @@ impl Contacts {
         let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
         sep.set_margin_left(12);
         sep.set_margin_right(12);
-        sep.set_can_focus(false);
         let row = gtk::ListBoxRow::new();
         row.add(&sep);
         row.show_all();

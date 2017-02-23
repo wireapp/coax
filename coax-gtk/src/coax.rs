@@ -15,7 +15,7 @@ use coax_actor::actor::{Init, Connected, Offline, Online};
 use coax_actor::config;
 use coax_api::conv::ConvType;
 use coax_api::message::send;
-use coax_api::types::{Label, Name, Email, Password, UserHandle, UserId, ConvId};
+use coax_api::types::{Label, Name, Email, Password, UserId, ConvId};
 use coax_api::user::{self, ConnectStatus};
 use coax_api_proto::{Builder as MsgBuilder, GenericMessage};
 use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus};
@@ -421,7 +421,7 @@ impl Coax {
             self.pool_act.spawn_fn(move || {
                 let mut act = actor.lock().unwrap();
                 Coax::ensure_connected(&mut *act)?;
-                let params = user::register::Params::new(UserHandle::Email(e), n, p);
+                let params = user::register::Params::email(e, n, p);
                 if let Some(Io::Connected(ref mut a)) = *act {
                     a.register_user(&params)
                 } else {
@@ -455,7 +455,7 @@ impl Coax {
             self.pool_act.spawn_fn(move || {
                 let mut act  = actor.lock().unwrap();
                 Coax::ensure_connected(&mut *act)?;
-                let params = user::login::Params::new(UserHandle::Email(e), p, Label::new("coax-gtk"));
+                let params = user::login::Params::email(e, p, Label::new("coax-gtk"));
                 if let Some(Io::Connected(mut a)) = act.take() {
                     match a.login(&params) {
                         Ok(usr) => {
@@ -580,7 +580,7 @@ impl Coax {
                 }));
                 this.load_local_conversations(&app)
             }))
-            .and_then(with!(this => move |_| {
+            .and_then(with!(this => move |()| {
                 this.pool_act.spawn_fn(move || {
                     let mut act = actor.lock().unwrap();
                     Coax::ensure_online(&mut *act)?;
@@ -589,7 +589,8 @@ impl Coax {
                         let     w = i.connect()?;
                         *inbox.lock().unwrap() = Some(i.fork(w));
                         *sync.lock().unwrap() = Some(a.clone()?);
-                        Ok(())
+                        let id = a.me().id.clone();
+                        a.resolve_user(&id, false)
                     } else {
                         Err(Error::Message("invalid app state"))
                     }

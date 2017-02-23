@@ -11,6 +11,7 @@ use gtk_sys;
 pub struct User {
     pub id:           UserId,
     pub name:         String,
+    pub handle:       Option<String>,
         icon_small:   Pixbuf,
         small_icons:  Vec<gpointer>,
         icon_medium:  Pixbuf,
@@ -88,6 +89,7 @@ impl<'a, 'b> From<&'b coax_data::User<'a>> for User {
         User {
             id:           u.id.clone(),
             name:         ffi::escape(u.name.as_str()).to_string_lossy().into_owned(),
+            handle:       u.handle.as_ref().map(|h| format!("@{}", ffi::escape(h.as_str()).to_string_lossy())),
             icon_small:   ico32,
             small_icons:  Vec::new(),
             icon_medium:  ico48,

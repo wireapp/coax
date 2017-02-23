@@ -197,11 +197,7 @@ json_str_type!(Phone);
 json_str_type!(Name);
 json_str_type!(Password);
 json_str_type!(Label);
-
-pub enum UserHandle<'a> {
-    Email(Email<'a>),
-    Phone(Phone<'a>)
-}
+json_str_type!(Handle);
 
 pub struct Page<T> {
     pub value:    T,

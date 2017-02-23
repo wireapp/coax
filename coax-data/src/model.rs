@@ -1,7 +1,7 @@
 use chrono::{DateTime, UTC};
 use coax_api::client::{self, Model, Client as ApiClient};
 use coax_api::conv::{ConvType, Conversation as ApiConv};
-use coax_api::types::{ClientId, ConvId, UserId, Name, Email, Phone, Label};
+use coax_api::types::{ClientId, ConvId, UserId, Name, Handle, Email, Phone, Label};
 use coax_api::user::{ConnectStatus, User as ApiUser, Connection as ApiConn};
 use coax_api::user::{AssetSize, AssetKey};
 use error::Error;
@@ -42,6 +42,7 @@ impl RawUser {
             id:      as_id(&self.id, "user id")?,
             name:    Name::new(self.name),
             email:   self.email.map(Email::new),
+            handle:  self.handle.map(Handle::new),
             phone:   self.phone.map(Phone::new),
             deleted: self.state == 1,
             icon:    self.icon.map(AssetKey::new)
@@ -54,6 +55,7 @@ pub struct User<'a> {
     pub id:      UserId,
     pub name:    Name<'a>,
     pub email:   Option<Email<'a>>,
+    pub handle:  Option<Handle<'a>>,
     pub phone:   Option<Phone<'a>>,
     pub deleted: bool,
     pub icon:    Option<AssetKey<'a>>
@@ -64,6 +66,7 @@ impl<'a> User<'a> {
         User {
             id:      id,
             name:    n,
+            handle:  None,
             email:   None,
             phone:   None,
             deleted: false,
@@ -75,6 +78,7 @@ impl<'a> User<'a> {
         User {
             id:      u.id,
             name:    u.name,
+            handle:  u.handle,
             email:   u.email,
             phone:   u.phone,
             deleted: u.deleted.unwrap_or(false),
@@ -104,7 +108,7 @@ impl<'a> NewUser<'a> {
             id:     u.id.as_slice(),
             name:   u.name.as_str(),
             state:  if u.deleted == Some(true) { 1 } else { 0 },
-            handle: None, // TODO
+            handle: u.handle.as_ref().map(|h| h.as_str()),
             email:  u.email.as_ref().map(|e| e.as_str()),
             phone:  u.phone.as_ref().map(|p| p.as_str()),
             icon:   u.assets.iter()

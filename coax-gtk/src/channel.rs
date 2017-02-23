@@ -15,6 +15,7 @@ use util::hash;
 pub struct Channel {
     image:        gtk::Image,
     name_label:   gtk::Label,
+    sub_label:    gtk::Label,
     date_label:   gtk::Label,
     time_label:   gtk::Label,
     channel_row:  gtk::ListBoxRow,
@@ -29,7 +30,9 @@ pub struct Channel {
 
 impl Channel {
     pub fn one_to_one(dt: &DateTime<Local>, id: &ConvId, u: &mut res::User) -> Channel {
-        Channel::new(dt, id, &Some(Name::new(u.name.clone())), u.icon_medium())
+        let ch = Channel::new(dt, id, &Some(Name::new(u.name.clone())), u.icon_medium());
+        u.handle.as_ref().map(|h| ch.set_sub(h.as_str()));
+        ch
     }
 
     pub fn group(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>) -> Channel {
@@ -58,11 +61,22 @@ impl Channel {
         name_label.set_margin_left(6);
         name_label.set_margin_top(6);
         name_label.set_margin_right(6);
-        name_label.set_margin_bottom(6);
         name_label.set_hexpand(true);
         name_label.set_halign(Align::Fill);
         name_label.set_xalign(0.0);
-        grid.attach(&name_label, 1, 0, 1, 2);
+        grid.attach(&name_label, 1, 0, 1, 1);
+
+        let sub_label = gtk::Label::new(None);
+        sub_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        ffi::set_ellipsis(&sub_label);
+        sub_label.set_max_width_chars(64);
+        sub_label.set_margin_left(6);
+        sub_label.set_margin_right(6);
+        sub_label.set_margin_bottom(6);
+        sub_label.set_hexpand(true);
+        sub_label.set_halign(Align::Fill);
+        sub_label.set_xalign(0.0);
+        grid.attach(&sub_label, 1, 1, 1, 1);
 
         let time_label = gtk::Label::new(None);
         time_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
@@ -110,6 +124,7 @@ impl Channel {
         let ch = Channel {
             image:        img,
             name_label:   name_label,
+            sub_label:    sub_label,
             date_label:   date_label,
             time_label:   time_label,
             channel_row:  channel_row,
@@ -222,6 +237,11 @@ impl Channel {
         let nstr = ffi::escape(name).to_string_lossy();
         self.name_label.set_markup(&format!("<big><b>{}</b></big>", nstr))
     }
+
+    fn set_sub(&self, name: &str) {
+        let nstr = ffi::escape(name).to_string_lossy();
+        self.sub_label.set_markup(&format!("<small>{}</small>", nstr))
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -244,32 +264,31 @@ impl Message {
         grid.set_column_spacing(12);
 
         let img = u.icon_small();
-        img.set_margin_bottom(6);
         grid.attach(&img, 0, 0, 1, 1);
 
         let nme = gtk::Label::new(None);
         nme.set_markup(&format!("<small><b>{}</b></small>", u.name));
-        nme.set_margin_bottom(6);
+        nme.set_tooltip_text(u.handle.as_ref().map(|h| h.as_ref()));
         nme.set_halign(Align::Start);
         grid.attach(&nme, 1, 0, 1, 1);
 
-        let lbl = gtk::Label::new(Some(txt));
-        lbl.set_selectable(true);
-        lbl.set_margin_bottom(6);
-        lbl.set_hexpand(true);
-        lbl.set_halign(Align::Fill);
-        lbl.set_xalign(0.0);
-        lbl.set_line_wrap(true);
-        grid.attach(&lbl, 1, 1, 1, 1);
-
         let time = gtk::Label::new(None);
         time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
-        time.set_margin_bottom(6);
         if let Some(t) = dt {
             let tstr = t.format("%T").to_string();
             time.set_markup(&format!("<small>{}</small>", tstr))
         }
         grid.attach(&time, 2, 0, 1, 1);
+
+        let lbl = gtk::Label::new(Some(txt));
+        lbl.set_selectable(true);
+        lbl.set_margin_top(6);
+        lbl.set_margin_bottom(6);
+        lbl.set_hexpand(true);
+        lbl.set_halign(Align::Fill);
+        lbl.set_xalign(0.0);
+        lbl.set_line_wrap(true);
+        grid.attach(&lbl, 1, 2, 1, 1);
 
         row.add(&grid);
         row.show_all();

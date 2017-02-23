@@ -14,6 +14,7 @@ use util;
 pub struct User<'a> {
     pub id:      UserId,
     pub name:    Name<'a>,
+    pub handle:  Option<Handle<'a>>,
     pub email:   Option<Email<'a>>,
     pub phone:   Option<Phone<'a>>,
     pub service: Option<ServiceRef>,
@@ -26,12 +27,17 @@ impl<'a> User<'a> {
         User {
             id:      id,
             name:    name,
+            handle:  None,
             email:   None,
             phone:   None,
             service: None,
             deleted: None,
             assets:  Cow::Owned(Vec::new())
         }
+    }
+
+    pub fn set_handle(&mut self, h: Handle<'a>) {
+        self.handle = Some(h)
     }
 
     pub fn set_email(&mut self, e: Email<'a>) {
@@ -58,6 +64,7 @@ impl<'a> User<'a> {
         let r = Ref::new(j);
         let i = r.get("id").string().and_then(UserId::from_str);
         let n = r.get("name").string().map(|s| Name::new(String::from(s)));
+        let h = r.get("handle").string().map(|s| Handle::new(String::from(s)));
         let e = r.get("email").string().map(|s| Email::new(String::from(s)));
         let p = r.get("phone").string().map(|s| Phone::new(String::from(s)));
         let s = r.get("service").value().map(ServiceRef::from_json);
@@ -65,6 +72,7 @@ impl<'a> User<'a> {
         Ok(User {
             id:      from_some!(i, DecodeError::Expected("id")),
             name:    from_some!(n, DecodeError::Expected("name")),
+            handle:  h,
             email:   e,
             phone:   p,
             service: from_some_ok!(s),
@@ -84,6 +92,7 @@ impl<'a> FromJson for User<'a> {
             User {
                 id:      req. "id"      => d.from_json(),
                 name:    req. "name"    => d.from_json(),
+                handle:  opt. "handle"  => d.optional(Decoder::from_json),
                 email:   opt. "email"   => d.optional(Decoder::from_json),
                 phone:   opt. "phone"   => d.optional(Decoder::from_json),
                 service: opt. "service" => d.optional(Decoder::from_json),
@@ -100,6 +109,7 @@ impl<'a> FromJson for User<'a> {
 pub struct UserUpdate<'a> {
     pub id:     UserId,
     pub name:   Option<Name<'a>>,
+    pub handle: Option<Handle<'a>>,
     pub email:  Option<Email<'a>>,
     pub phone:  Option<Phone<'a>>,
     pub assets: Option<Cow<'a, [Asset<'a>]>>
@@ -110,6 +120,7 @@ impl<'a> UserUpdate<'a> {
         UserUpdate {
             id:      id,
             name:    None,
+            handle:  None,
             email:   None,
             phone:   None,
             assets:  None
@@ -120,6 +131,7 @@ impl<'a> UserUpdate<'a> {
         let r = Ref::new(j);
         let i = r.get("id").string().and_then(UserId::from_str);
         let n = r.get("name").string().map(|s| Name::new(String::from(s)));
+        let h = r.get("handle").string().map(|s| Handle::new(String::from(s)));
         let e = r.get("email").string().map(|s| Email::new(String::from(s)));
         let p = r.get("phone").string().map(|s| Phone::new(String::from(s)));
         let a = r.get("assets").value()
@@ -128,6 +140,7 @@ impl<'a> UserUpdate<'a> {
         Ok(UserUpdate {
             id:     from_some!(i, DecodeError::Expected("id")),
             name:   n,
+            handle: h,
             email:  e,
             phone:  p,
             assets: from_some_ok!(a)
@@ -409,22 +422,21 @@ pub mod register {
     }
 
     impl<'a> Params<'a> {
-        pub fn new(u: UserHandle<'a>, n: Name<'a>, p: Password<'a>) -> Params<'a> {
-            match u {
-                UserHandle::Email(x) =>
-                    Params {
-                        name:  n,
-                        email: Some(x),
-                        phone: None,
-                        pass:  Some(p)
-                    },
-                UserHandle::Phone(x) =>
-                    Params {
-                        name:  n,
-                        email: None,
-                        phone: Some(x),
-                        pass:  Some(p)
-                    }
+        pub fn email(x: Email<'a>, n: Name<'a>, p: Password<'a>) -> Params<'a> {
+            Params {
+                name:  n,
+                email: Some(x),
+                phone: None,
+                pass:  Some(p)
+            }
+        }
+
+        pub fn phone(x: Phone<'a>, n: Name<'a>, p: Password<'a>) -> Params<'a> {
+            Params {
+                name:  n,
+                email: None,
+                phone: Some(x),
+                pass:  Some(p)
             }
         }
     }
@@ -482,29 +494,41 @@ pub mod login {
     #[derive(Clone, Debug)]
     /// Login parameters.
     pub struct Params<'a> {
-        pub email: Option<Email<'a>>,
-        pub phone: Option<Phone<'a>>,
-        pub pass:  Password<'a>,
-        pub label: Label<'a>
+        pub email:  Option<Email<'a>>,
+        pub handle: Option<Handle<'a>>,
+        pub phone:  Option<Phone<'a>>,
+        pub pass:   Password<'a>,
+        pub label:  Label<'a>
     }
 
     impl<'a> Params<'a> {
-        pub fn new(u: UserHandle<'a>, p: Password<'a>, l: Label<'a>) -> Params<'a> {
-            match u {
-                UserHandle::Email(x) =>
-                    Params {
-                        email: Some(x),
-                        phone: None,
-                        pass:  p,
-                        label: l
-                    },
-                UserHandle::Phone(x) =>
-                    Params {
-                        email: None,
-                        phone: Some(x),
-                        pass:  p,
-                        label: l
-                    }
+        pub fn handle(x: Handle<'a>, p: Password<'a>, l: Label<'a>) -> Params<'a> {
+            Params {
+                email:  None,
+                handle: Some(x),
+                phone:  None,
+                pass:   p,
+                label:  l
+            }
+        }
+
+        pub fn email(x: Email<'a>, p: Password<'a>, l: Label<'a>) -> Params<'a> {
+            Params {
+                email:  Some(x),
+                handle: None,
+                phone:  None,
+                pass:   p,
+                label:  l
+            }
+        }
+
+        pub fn phone(x: Phone<'a>, p: Password<'a>, l: Label<'a>) -> Params<'a> {
+            Params {
+                email:  None,
+                handle: None,
+                phone:  Some(x),
+                pass:   p,
+                label:  l
             }
         }
     }
@@ -512,6 +536,7 @@ pub mod login {
     impl<'a> ToJson for Params<'a> {
         fn encode<W: Write>(&self, e: &mut Encoder<W>) -> EncodeResult<()> {
             e.object()?;
+                e.key("handle")?;   e.to_json(&self.handle)?;
                 e.key("email")?;    e.to_json(&self.email)?;
                 e.key("phone")?;    e.to_json(&self.phone)?;
                 e.key("password")?; e.to_json(&self.pass)?;

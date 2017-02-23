@@ -46,6 +46,16 @@ impl Contacts {
     {
         let contact = Contact::new(u, c, k);
         self.list.add(&contact.row);
+
+        let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
+        sep.set_margin_left(12);
+        sep.set_margin_right(12);
+        sep.set_can_focus(false);
+        let row = gtk::ListBoxRow::new();
+        row.add(&sep);
+        row.show_all();
+        self.list.add(&row);
+
         self.model.insert(u.id.clone(), contact);
     }
 
@@ -68,7 +78,10 @@ impl Contacts {
     pub fn set_refresh_action<F>(&self, f: F)
         where F: Fn() + 'static
     {
-        self.refresh.connect_clicked(move |_| f());
+        self.refresh.connect_clicked(move |b| {
+            b.set_sensitive(false); // TODO
+            f()
+        });
         self.refresh.set_sensitive(true)
     }
 }
@@ -92,29 +105,33 @@ impl Contact {
         grid.set_margin_right(6);
         grid.set_row_spacing(12);
 
+        let img = usr.icon_large();
+        img.set_margin_left(12);
+        img.set_margin_top(12);
+        img.set_margin_right(12);
+        img.set_margin_bottom(12);
+        grid.attach(&img, 0, 0, 1, 1);
+
+        let vbox = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        vbox.set_margin_top(12);
+
         let name = gtk::Label::new(None);
         name.set_markup(&format!("<span size=\"x-large\"><b>{}</b></span>", usr.name));
         name.set_halign(Align::Center);
         name.set_hexpand(true);
-        name.set_margin_top(12);
-        grid.attach(&name, 0, 0, 1, 1);
+        vbox.add(&name);
+
+        let handle = gtk::Label::new(usr.handle.as_ref().map(|s| s.as_ref()));
+        handle.set_halign(Align::Center);
+        handle.set_hexpand(true);
+        handle.set_margin_bottom(12);
+        vbox.add(&handle);
 
         let status = gtk::ComboBoxText::new();
         status.set_halign(Align::Center);
-        grid.attach(&status, 0, 1, 1, 1);
+        vbox.add(&status);
 
-        let img = usr.icon_large();
-        img.set_margin_left(12);
-        img.set_margin_top(6);
-        img.set_margin_right(6);
-        img.set_margin_bottom(12);
-        img.set_halign(Align::Start);
-        grid.attach(&img, 0, 2, 1, 1);
-
-        let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
-        grid.attach(&sep, 0, 3, 1, 1);
-
-        grid.insert_column(1);
+        grid.attach(&vbox, 1, 0, 1, 1);
 
         row.add(&grid);
         row.show_all();
@@ -161,7 +178,9 @@ impl Contact {
                 self.status.append(Some(Accepted.as_str()), Accepted.as_str());
                 self.status.append(Some(Blocked.as_str()), Blocked.as_str())
             }
-            Blocked => {}
+            Blocked => {
+                self.status.append(Some(Accepted.as_str()), Accepted.as_str())
+            }
         }
     }
 

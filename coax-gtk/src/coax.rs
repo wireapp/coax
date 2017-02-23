@@ -714,7 +714,7 @@ impl Coax {
         }
 
         if conv.ctype == ConvType::Group {
-            let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name);
+            let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
             self.convlist.add(ch.channel_row());
             self.channels.borrow_mut().insert(conv.id, ch);
             self.convlist.show_all();

@@ -35,13 +35,15 @@ impl Channel {
         ch
     }
 
-    pub fn group(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>) -> Channel {
+    pub fn group(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, len: usize) -> Channel {
         let img = {
             let buf = Pixbuf::new_from_resource("/coax/icons/bubbles.png").unwrap();
             let ico = buf.scale_simple(48, 48, InterpType::Bilinear).unwrap();
             gtk::Image::new_from_pixbuf(Some(&ico))
         };
-        Channel::new(dt, id, n, img)
+        let ch = Channel::new(dt, id, n, img);
+        ch.set_sub(&format!("{} participants", len));
+        ch
     }
 
     fn new(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, img: gtk::Image) -> Channel {

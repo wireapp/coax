@@ -500,8 +500,9 @@ impl Actor<Online> {
 
     /// Given some `UserId` return the corresponding user data.
     ///
-    /// If the user is found in local storage it is returned right away,
-    /// otherwise we try to get the information from back-end and save it locally.
+    /// If the user is found in local storage and `allow_local` is `true`
+    /// it is returned right away, otherwise we try to get the information
+    /// from back-end and save it locally.
     pub fn resolve_user<'a>(&mut self, id: &UserId, allow_local: bool) -> Result<Option<User<'a>>, Error> {
         if allow_local {
             if let Some(usr) = self.state.user.dbase.user(id)? {
@@ -1126,8 +1127,7 @@ impl Actor<Online> {
                 return Ok(())
             };
         if self.resolve_client(&usr.id, &msg.sender)?.is_none() {
-            warn!(self.logger, "unknown sender client"; "user" => e.from.to_string(), "client" => msg.sender.as_str());
-            return Ok(())
+            info!(self.logger, "unknown sender client"; "user" => e.from.to_string(), "client" => msg.sender.as_str())
         }
         if self.resolve_conversation(&e.id)?.is_none() {
             warn!(self.logger, "unknown conversation"; "id" => e.id.to_string(), "user" => e.from.to_string());

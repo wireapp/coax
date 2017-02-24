@@ -951,13 +951,17 @@ impl Actor<Online> {
                     client.notifications_reader(&p, &creds.token)?
                 };
                 {
-                    let mut iter = events::get::Iter::from_read(&mut reader)?;
-                    while let Some(n) = iter.next() {
-                        last_id = Some(n.id.clone());
-                        self.on_notification(n)?
-                    }
-                    if let Some(e) = iter.take_error() {
-                        return Err(e.into())
+                    let mut iter = events::get::Iter::from_read(&self.logger, &mut reader)?;
+                    while let Some(item) = iter.next() {
+                        match item {
+                            Ok(n) => {
+                                last_id = Some(n.id.clone());
+                                self.on_notification(n)?
+                            }
+                            Err(e) => error!(self.logger, "failed to parse notification";
+                                "prev"  => last_id.as_ref().map(|id| id.to_string()).unwrap_or("N/A".into()),
+                                "error" => format!("{:?}", e))
+                        }
                     }
                     more = iter.has_more()?;
                 }

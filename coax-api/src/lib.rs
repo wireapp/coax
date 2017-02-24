@@ -9,6 +9,8 @@ extern crate proteus;
 extern crate protobuf;
 #[macro_use]
 extern crate quick_error;
+#[macro_use]
+extern crate slog;
 extern crate rustc_serialize;
 extern crate uuid;
 

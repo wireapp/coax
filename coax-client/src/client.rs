@@ -716,14 +716,15 @@ impl<'a> Client<'a> {
         debug!(self.log, "get notifications");
         let mut vec = Vec::new();
         let token = {
+            let logger  = self.log.clone();
             let mut rdr = self.notifications_reader(p, t)?;
             {
-                let mut itr = events::get::Iter::from_read(&mut rdr)?;
-                while let Some(n) = itr.next() {
-                    vec.push(n)
-                }
-                if let Some(e) = itr.take_error() {
-                    return Err(Error::Json(e))
+                let mut itr = events::get::Iter::from_read(&logger, &mut rdr)?;
+                while let Some(item) = itr.next() {
+                    match item {
+                        Ok(n)  => vec.push(n),
+                        Err(e) => error!(logger, "failed to parse notification"; "error" => format!("{:?}", e))
+                    }
                 }
             }
             rdr.into()?

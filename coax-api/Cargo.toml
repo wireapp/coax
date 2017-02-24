@@ -19,5 +19,6 @@ protobuf        = ">= 1.0"
 openssl         = ">= 0.9"
 quick-error     = ">= 1.1"
 rustc-serialize = ">= 0.3"
+slog            = ">= 1.0"
 url             = ">= 1.1"
 uuid            = { version = ">= 0.3", features = ["v4", "v5"] }

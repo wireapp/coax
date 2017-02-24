@@ -185,6 +185,7 @@ dependencies = [
  "protobuf 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "quick-error 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rustc-serialize 0.3.22 (registry+https://github.com/rust-lang/crates.io-index)",
+ "slog 1.5.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "url 1.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "uuid 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

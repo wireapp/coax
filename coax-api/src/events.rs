@@ -302,6 +302,7 @@ pub mod get {
 
     use std::io::Read;
     use json::decoder::{Decoder, DecodeError, DecodeResult, ReadIter};
+    use slog::Logger;
     use super::Notification;
     use types::{ClientId, NotifId};
 
@@ -333,17 +334,17 @@ pub mod get {
     pub struct Iter<I: Iterator<Item=char>> {
         decoder:  Decoder<I>,
         has_more: Option<bool>,
-        error:    Option<DecodeError>
+        logger:   Logger
     }
 
     impl<R: Read> Iter<ReadIter<R>> {
-        pub fn from_read(r: R) -> DecodeResult<Iter<ReadIter<R>>> {
-            Iter::new(ReadIter::new(r))
+        pub fn from_read(g: &Logger, r: R) -> DecodeResult<Iter<ReadIter<R>>> {
+            Iter::new(g, ReadIter::new(r))
         }
     }
 
     impl<I: Iterator<Item=char>> Iter<I> {
-        pub fn new(i: I) -> DecodeResult<Iter<I>> {
+        pub fn new(g: &Logger, i: I) -> DecodeResult<Iter<I>> {
             let mut d = Decoder::default(i);
             let mut has_more = None;
             d.object()?;
@@ -355,7 +356,7 @@ pub mod get {
                         let it = Iter {
                             decoder:  d,
                             has_more: has_more,
-                            error:    None
+                            logger:   g.new(o!("context" => "Iter"))
                         };
                         return Ok(it)
                     }
@@ -363,14 +364,6 @@ pub mod get {
                 }
             }
             Err(DecodeError::Expected("notifications"))
-        }
-
-        pub fn error(&self) -> Option<&DecodeError> {
-            self.error.as_ref()
-        }
-
-        pub fn take_error(&mut self) -> Option<DecodeError> {
-            self.error.take()
         }
 
         pub fn has_more(&mut self) -> DecodeResult<bool> {
@@ -389,21 +382,14 @@ pub mod get {
     }
 
     impl<I: Iterator<Item=char>> Iterator for Iter<I> {
-        type Item = Notification<'static>;
+        type Item = DecodeResult<Notification<'static>>;
 
-        fn next(&mut self) -> Option<Notification<'static>> {
+        fn next(&mut self) -> Option<DecodeResult<Notification<'static>>> {
             match self.decoder.has_more() {
-                Ok(true)  => (),
-                Ok(false) => return None,
+                Ok(true)  => Some(self.decoder.from_json()),
+                Ok(false) => None,
                 Err(e)    => {
-                    self.error = Some(e);
-                    return None
-                }
-            }
-            match self.decoder.from_json() {
-                Ok(n)  => Some(n),
-                Err(e) => {
-                    self.error = Some(e);
+                    error!(self.logger, "Decoder::has_more failed"; "error" => format!("{:?}", e));
                     None
                 }
             }

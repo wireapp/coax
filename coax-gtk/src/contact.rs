@@ -75,11 +75,11 @@ impl Contacts {
     }
 
     pub fn set_refresh_action<F>(&self, f: F)
-        where F: Fn() + 'static
+        where F: Fn(gtk::Button) + 'static
     {
         self.refresh.connect_clicked(move |b| {
-            b.set_sensitive(false); // TODO
-            f()
+            b.set_sensitive(false);
+            f(b.clone())
         });
         self.refresh.set_sensitive(true)
     }

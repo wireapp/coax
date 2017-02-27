@@ -198,7 +198,7 @@ impl Channel {
 
     pub fn insert_delivery_date(&mut self, k: &str, d: Date<Local>) {
         let ix = self.get_msg(k).map(Message::index).unwrap_or(-1);
-        if ix != -1 && (d != self.date_upper || self.model.len() == 1) {
+        if ix != -1 && d != self.date_upper {
             let dm = Message::date(d);
             self.date_upper = d;
             self.message_list.insert(&dm.row, ix);

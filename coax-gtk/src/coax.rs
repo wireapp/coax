@@ -481,6 +481,7 @@ impl Coax {
                 }
             })
             .map(with!(this, app => move |(me, is_new_client)| {
+                this.show_info("Loading conversations ...");
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
                 let mut res = this.res.borrow_mut();
@@ -505,6 +506,7 @@ impl Coax {
                 }
             }))
             .and_then(with!(this => move |()| {
+                this.show_info("Synchronising ...");
                 this.pool_rem.spawn(this.notifications(true))
             }))
             .map(with!(this => move |_| {
@@ -559,6 +561,7 @@ impl Coax {
                 }
             }))
             .map(with!(this, app => move |me| {
+                this.show_info("Loading conversations ...");
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
                 let mut res = this.res.borrow_mut();
@@ -594,6 +597,7 @@ impl Coax {
                 })
             }))
             .and_then(with!(this => move |_| {
+                this.show_info("Synchronising ...");
                 this.pool_rem.spawn(this.notifications(true))
             }))
             .map(with!(this => move |_| {
@@ -633,7 +637,7 @@ impl Coax {
             Pkg::MessageUpdate(c, m, t, s) => self.on_message_update(m, c, t, s),
             Pkg::Conversation(c)           => self.on_conversation(c),
             Pkg::Contact(u, c)             => self.on_contact(app, u, c),
-            Pkg::MembersAdd(t, c, m)       => self.on_members_add(app, t, c, m),
+            Pkg::MembersAdd(_, c, m)       => self.on_members_add(c, m),
             Pkg::Fin                       => return true
         }
         false
@@ -646,10 +650,7 @@ impl Coax {
         if let Some(mut ch) = self.channels.borrow_mut().get_mut(&m.conv) {
             if !ch.has_msg(&m.id) {
                 self.ensure_user_res(&m.user);
-                let mtime = m.time.with_timezone(&self.timezone);
-                if mtime.date() != ch.newest_date() {
-                    ch.add(Message::date(mtime.date()))
-                }
+                let mtime   = m.time.with_timezone(&self.timezone);
                 let mut res = self.res.borrow_mut();
                 let mut usr = res.user_mut(&m.user.id).unwrap();
                 match m.data {
@@ -667,7 +668,7 @@ impl Coax {
             }
         } else {
             let conv_id = m.conv.to_string();
-            info!(self.log, "message for unknown conversation"; "conv" => conv_id);
+            info!(self.log, "message for unresolved conversation"; "conv" => conv_id);
             let future = self.pool_act.spawn(self.conversation(&m.conv))
                 .map(with!(this  => move |conv| {
                     if let Some(c) = conv {
@@ -784,39 +785,25 @@ impl Coax {
         }));
     }
 
-    fn on_members_add(&self, app: &gtk::Application, time: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>) {
+    fn on_members_add(&self, cid: ConvId, members: Vec<User<'static>>) {
         debug!(self.log, "on_members_add"; "conv" => cid.to_string());
-        if let Some(mut ch) = self.channels.borrow_mut().get_mut(&cid) {
-            let local_time = time.with_timezone(&self.timezone);
-            for m in members {
-                let id = m.id.as_uuid().simple().to_string();
-                if ch.has_msg(&id) {
-                    continue
-                }
-                self.ensure_user_res(&m);
-                if local_time.date() != ch.newest_date() {
-                    ch.add(Message::date(local_time.date()))
-                }
-                let txt = format!("{} has joined this conversation.", m.name.as_str());
-                let msg = Message::text(Some(local_time), &mut (&m).into(), &txt);
-                ch.push_msg(&id, msg);
-                self.convlist.invalidate_sort()
-            }
-        } else {
+        if self.channels.borrow().get(&cid).is_none() {
             let this   = self.clone();
             let future = self.pool_act.spawn(self.conversation(&cid))
-                .map(with!(this, app  => move |conv| {
+                .map(with!(this => move |conv| {
                     if let Some(c) = conv {
-                        this.on_conversation(c);
-                        this.on_members_add(&app, time, cid, members)
+                        this.on_conversation(c)
                     } else {
                         error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
                     }
                 }))
                 .map_err(with!(this => move |e| {
-                    error!(this.log, "on_message error"; "error" => format!("{}", e))
+                    error!(this.log, "on_members_add error"; "error" => format!("{}", e))
                 }));
             self.futures.send(Box::new(future)).unwrap()
+        }
+        for m in members {
+            self.ensure_user_res(&m)
         }
     }
 
@@ -961,20 +948,17 @@ impl Coax {
             .map(with!(this, id, mid => move |dt| {
                 let mut channels = this.channels.borrow_mut();
                 if let Some(mut ch) = channels.get_mut(&id) {
-                    let loc_time  = dt.with_timezone(&this.timezone);
-                    let msg_index =
+                    let loc_time   = dt.with_timezone(&this.timezone);
+                    let is_message =
                         if let Some(mut msg) = ch.get_msg_mut(&mid) {
                             msg.stop_spinner();
                             msg.set_time(loc_time.clone());
-                            msg.index()
+                            true
                         } else {
-                            -1
+                            false
                         };
-                    if msg_index != -1 {
-                        if loc_time.date() != ch.newest_date() {
-                            ch.insert(msg_index, Message::date(loc_time.date()));
-                            ch.set_newest_date(loc_time.date())
-                        }
+                    if is_message {
+                        ch.insert_delivery_date(&mid, loc_time.date());
                         ch.update_time(&loc_time);
                         this.convlist.invalidate_sort()
                     }
@@ -1037,11 +1021,12 @@ impl Coax {
         let future = self.pool_act.spawn(self.messages(cid, None)) // TODO
             .map(with!(this, cid => move |mm| {
                 if let Some(mut chan) = this.channels.borrow_mut().get_mut(&cid) {
-                    let is_empty = mm.data.is_empty();
+                    let mut new_content = false;
                     for m in mm.data {
                         if chan.has_msg(&m.id) {
                             continue
                         }
+                        new_content = true;
                         this.ensure_user_res(&m.user);
                         let mut res = this.res.borrow_mut();
                         let mut usr = res.user_mut(&m.user.id).unwrap();
@@ -1053,22 +1038,15 @@ impl Coax {
                                 Message::text(None, &mut usr, &txt)
                             }
                         };
-                        let mtime   = m.time.with_timezone(&this.timezone);
-                        let daydiff = mtime.date() != chan.oldest_date();
                         if m.status == MessageStatus::Created {
                             msg.set_error()
                         } else {
-                            msg.set_time(mtime)
-                        }
-                        if daydiff {
-                            let date = chan.oldest_date();
-                            chan.add_front(Message::date(date))
+                            msg.set_time(m.time.with_timezone(&this.timezone))
                         }
                         chan.push_front_msg(&m.id, msg)
                     }
-                    if !is_empty {
-                        let date = chan.oldest_date();
-                        chan.add_front(Message::date(date));
+                    if new_content {
+                        chan.push_front_date()
                     }
                     chan.set_init()
                 };

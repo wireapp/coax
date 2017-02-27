@@ -144,6 +144,14 @@ impl Channel {
         ch
     }
 
+    pub fn is_init(&self) -> bool {
+        self.init
+    }
+
+    pub fn set_init(&mut self) {
+        self.init = true
+    }
+
     pub fn channel_row(&self) -> &gtk::ListBoxRow {
         &self.channel_row
     }
@@ -164,59 +172,42 @@ impl Channel {
         self.model.get_mut(&hash(k))
     }
 
-    pub fn insert(&mut self, i: i32, m: Message) {
-        self.message_list.insert(&m.row, i)
-    }
-
-    pub fn add_front(&mut self, m: Message) {
-        self.message_list.prepend(&m.row);
-        if let Some(ref time) = m.dtime {
-            self.date_lower = time.date()
-        }
-    }
-
-    pub fn add(&mut self, m: Message) {
-        self.message_list.add(&m.row);
-        if let Some(ref time) = m.dtime {
-            self.date_upper = time.date()
-        }
-    }
-
     pub fn push_front_msg(&mut self, id: &str, m: Message) {
-        self.message_list.prepend(&m.row);
         if let Some(ref time) = m.dtime {
+            if time.date() != self.date_lower && !self.model.is_empty() {
+                self.push_front_date()
+            }
             self.date_lower = time.date()
         }
+        self.message_list.prepend(&m.row);
         self.model.insert(hash(id), m);
     }
 
     pub fn push_msg(&mut self, id: &str, m: Message) {
-        self.message_list.add(&m.row);
         if let Some(ref time) = m.dtime {
+            if time.date() != self.date_upper || self.model.is_empty() {
+                let dm = Message::date(time.date());
+                self.message_list.add(&dm.row)
+            }
             self.date_upper = time.date();
             self.update_time(time);
         }
+        self.message_list.add(&m.row);
         self.model.insert(hash(id), m);
     }
 
-    pub fn is_init(&self) -> bool {
-        self.init
+    pub fn insert_delivery_date(&mut self, k: &str, d: Date<Local>) {
+        let ix = self.get_msg(k).map(Message::index).unwrap_or(-1);
+        if ix != -1 && (d != self.date_upper || self.model.len() == 1) {
+            let dm = Message::date(d);
+            self.date_upper = d;
+            self.message_list.insert(&dm.row, ix);
+        }
     }
 
-    pub fn set_init(&mut self) {
-        self.init = true
-    }
-
-    pub fn oldest_date(&self) -> Date<Local> {
-        self.date_lower
-    }
-
-    pub fn newest_date(&self) -> Date<Local> {
-        self.date_upper
-    }
-
-    pub fn set_newest_date(&mut self, d: Date<Local>) {
-        self.date_upper = d
+    pub fn push_front_date(&mut self) {
+        let dm = Message::date(self.date_lower);
+        self.message_list.prepend(&dm.row)
     }
 
     pub fn update_time(&self, dt: &DateTime<Local>) {

@@ -189,8 +189,7 @@ impl Channel {
                 let dm = Message::date(time.date());
                 self.message_list.add(&dm.row)
             }
-            self.date_upper = time.date();
-            self.update_time(time);
+            self.update_time(time)
         }
         self.message_list.add(&m.row);
         self.model.insert(hash(id), m);
@@ -210,7 +209,8 @@ impl Channel {
         self.message_list.prepend(&dm.row)
     }
 
-    pub fn update_time(&self, dt: &DateTime<Local>) {
+    pub fn update_time(&mut self, dt: &DateTime<Local>) {
+        self.date_upper = dt.date();
         self.set_time(dt);
         self.update_tstamp(dt.timestamp())
     }

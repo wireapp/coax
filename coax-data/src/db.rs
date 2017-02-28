@@ -26,6 +26,11 @@ pub struct Database {
     conn:   SqliteConnection
 }
 
+const PRAGMAS: &'static str =
+    r#"PRAGMA foreign_keys = ON;
+       PRAGMA journal_mode = WAL;
+       PRAGMA busy_timeout = 5000;"#;
+
 impl Database {
     pub fn open(g: &Logger, path: &str) -> Result<Database, Error> {
         let c = SqliteConnection::establish(path)?;
@@ -33,7 +38,8 @@ impl Database {
             logger: g.new(o!("context" => "Database")),
             conn:   c
         };
-        db.conn.batch_execute(r#"PRAGMA foreign_keys = ON; PRAGMA journal_mode=WAL;"#)?;
+
+        db.conn.batch_execute(PRAGMAS)?;
         Ok(db)
     }
 

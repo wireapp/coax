@@ -1208,7 +1208,7 @@ impl Actor<Online> {
                     }
                     self.state.user.dbase.update_conv_time(&e.id, e.time.timestamp())?;
                     let message = data::Message {
-                        id:     plain.text.take_message_id(),
+                        id:     mid,
                         conv:   e.id,
                         time:   e.time,
                         user:   usr,

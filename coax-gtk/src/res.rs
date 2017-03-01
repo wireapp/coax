@@ -3,7 +3,7 @@ use coax_api::types::UserId;
 use coax_data;
 use ffi;
 use gdk_pixbuf::{InterpType, Pixbuf, PixbufLoader};
-use glib::translate::FromGlibPtr;
+use glib::translate::FromGlibPtrNone;
 use glib_sys::gpointer;
 use gtk;
 use gtk_sys;

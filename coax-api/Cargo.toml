@@ -11,7 +11,7 @@ description = "Wire API type definitions"
 [dependencies]
 chrono          = ">= 0.2"
 coax-api-proto  = { path = "../coax-api-proto" }
-cookie          = { git = "https://github.com/alexcrichton/cookie-rs.git", default-features = false }
+cookie          = ">= 0.6.1"
 cryptobox       = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 json-codec      = ">= 0.4"
 proteus         = { git = "https://github.com/wireapp/proteus.git", branch = "develop" }

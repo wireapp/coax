@@ -155,7 +155,7 @@ dependencies = [
  "coax-data 0.1.0",
  "coax-net 0.1.0",
  "coax-ws 0.1.0",
- "cookie 0.6.0 (git+https://github.com/alexcrichton/cookie-rs.git)",
+ "cookie 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cryptobox 1.0.0 (git+https://github.com/wireapp/cryptobox.git?branch=reshuffle2)",
  "json-codec 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.9.7 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -177,7 +177,7 @@ version = "0.1.0"
 dependencies = [
  "chrono 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "coax-api-proto 0.1.0",
- "cookie 0.6.0 (git+https://github.com/alexcrichton/cookie-rs.git)",
+ "cookie 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cryptobox 1.0.0 (git+https://github.com/wireapp/cryptobox.git?branch=reshuffle2)",
  "json-codec 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.9.7 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -205,7 +205,7 @@ dependencies = [
  "coax-api 0.1.0",
  "coax-net 0.1.0",
  "coax-ws 0.1.0",
- "cookie 0.6.0 (git+https://github.com/alexcrichton/cookie-rs.git)",
+ "cookie 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cryptobox 1.0.0 (git+https://github.com/wireapp/cryptobox.git?branch=reshuffle2)",
  "json-codec 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.9.7 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -239,7 +239,7 @@ dependencies = [
  "coax-client 0.1.0",
  "coax-data 0.1.0",
  "coax-net 0.1.0",
- "cookie 0.6.0 (git+https://github.com/alexcrichton/cookie-rs.git)",
+ "cookie 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "cryptobox 1.0.0 (git+https://github.com/wireapp/cryptobox.git?branch=reshuffle2)",
  "fnv 1.0.5 (registry+https://github.com/rust-lang/crates.io-index)",
  "futures 0.1.10 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -271,7 +271,7 @@ dependencies = [
 name = "coax-net"
 version = "0.1.0"
 dependencies = [
- "cookie 0.6.0 (git+https://github.com/alexcrichton/cookie-rs.git)",
+ "cookie 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "flate2 0.2.17 (registry+https://github.com/rust-lang/crates.io-index)",
  "httparse 1.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "json-codec 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -285,8 +285,8 @@ dependencies = [
 
 [[package]]
 name = "cookie"
-version = "0.6.0"
-source = "git+https://github.com/alexcrichton/cookie-rs.git#11ce089e3756a2d65220dfdfde8542d98a3a74d4"
+version = "0.6.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "time 0.1.36 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1209,7 +1209,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum chrono 0.2.25 (registry+https://github.com/rust-lang/crates.io-index)" = "9213f7cd7c27e95c2b57c49f0e69b1ea65b27138da84a170133fd21b07659c00"
 "checksum chrono 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "158b0bd7d75cbb6bf9c25967a48a2e9f77da95876b858eadfabaa99cd069de6e"
 "checksum clap 2.20.5 (registry+https://github.com/rust-lang/crates.io-index)" = "7db281b0520e97fbd15cd615dcd8f8bcad0c26f5f7d5effe705f090f39e9a758"
-"checksum cookie 0.6.0 (git+https://github.com/alexcrichton/cookie-rs.git)" = "<none>"
+"checksum cookie 0.6.1 (registry+https://github.com/rust-lang/crates.io-index)" = "ce776927cd64cbe74ebd1d9b375edb9d1b6bfa808618ddf9548645e019ebdfbb"
 "checksum crossbeam 0.2.10 (registry+https://github.com/rust-lang/crates.io-index)" = "0c5ea215664ca264da8a9d9c3be80d2eaf30923c259d03e870388eb927508f97"
 "checksum cryptobox 1.0.0 (git+https://github.com/wireapp/cryptobox.git?branch=reshuffle2)" = "<none>"
 "checksum diesel 0.11.4 (registry+https://github.com/rust-lang/crates.io-index)" = "2f872f59c19519db52506648a00d18ec5e3aa81eb99710f6837715eae41f3c76"

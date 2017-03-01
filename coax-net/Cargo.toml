@@ -9,7 +9,7 @@ homepage    = "https://github.com/wireapp/coax"
 description = "TLS networking and HTTP support."
 
 [dependencies]
-cookie      = { git = "https://github.com/alexcrichton/cookie-rs.git", default-features = false }
+cookie      = ">= 0.6.1"
 flate2      = ">= 0.2"
 httparse    = ">= 1.1"
 json-codec  = ">= 0.4"

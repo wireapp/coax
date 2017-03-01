@@ -12,7 +12,7 @@ description = "Wire API client"
 coax-api    = { path = "../coax-api" }
 coax-net    = { path = "../coax-net" }
 coax-ws     = { path = "../coax-ws" }
-cookie      = { git = "https://github.com/alexcrichton/cookie-rs.git", default-features = false }
+cookie      = ">= 0.6.1"
 cryptobox   = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 json-codec  = ">= 0.4"
 slog        = ">= 1.0"

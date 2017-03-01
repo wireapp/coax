@@ -432,9 +432,10 @@ pub enum MessageData {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageStatus {
-    Created  = 0,
-    Received = 1,
-    Sent     = 2
+    Created   = 0,
+    Received  = 1,
+    Sent      = 2,
+    Delivered = 3
 }
 
 impl MessageStatus {
@@ -443,6 +444,7 @@ impl MessageStatus {
             0 => Some(MessageStatus::Created),
             1 => Some(MessageStatus::Received),
             2 => Some(MessageStatus::Sent),
+            3 => Some(MessageStatus::Delivered),
             _ => None
         }
     }

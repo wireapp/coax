@@ -327,6 +327,14 @@ impl Message {
         self.row.get_index()
     }
 
+    pub fn set_delivered(&mut self) {
+        let check = gtk::Label::new(Some("✅"));
+        check.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        check.set_tooltip_text(Some("Message has been delivered successfully."));
+        check.show();
+        self.grid.attach(&check, 2, 2, 1, 1)
+    }
+
     pub fn set_time(&mut self, dt: DateTime<Local>) {
         if let Some(w) = self.grid.get_child_at(2, 0) {
             self.grid.remove(&w)

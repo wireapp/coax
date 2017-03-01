@@ -432,6 +432,18 @@ impl Database {
         Ok(())
     }
 
+    /// Select conversation ID corresponding to message ID.
+    pub fn message_conversation_id(&self, mid: &str) -> Result<Option<ConvId>, Error> {
+        use schema::messages::dsl::*;
+        debug!(self.logger, "select conversation of message"; "id" => mid);
+        let source = messages.filter(id.eq(mid)).select(conv);
+        match source.first::<Vec<u8>>(&self.conn) {
+            Err(result::Error::NotFound) => Ok(None),
+            Err(e)  => Err(Error::Result(e)),
+            Ok(cid) => as_id(&cid, "conversation id").map(Some)
+        }
+    }
+
     /// Select value by lookup key.
     pub fn var(&self, n: &str) -> Result<Option<Vec<u8>>, Error> {
         use schema::variables::dsl::*;

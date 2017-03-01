@@ -163,7 +163,7 @@ pub const SCHEMA: &'static str = r"
     ) WITHOUT ROWID;
 
     CREATE TABLE IF NOT EXISTS messages (
-        id       Text NOT NULL,
+        id       TEXT NOT NULL,
         conv     BLOB NOT NULL,
         time     BIGINT NOT NULL,
         from_usr BLOB NOT NULL,
@@ -176,6 +176,8 @@ pub const SCHEMA: &'static str = r"
         FOREIGN KEY (conv) REFERENCES conversations ON DELETE CASCADE
         FOREIGN KEY (from_usr) REFERENCES users ON DELETE RESTRICT
     );
+
+    CREATE INDEX IF NOT EXISTS message_id_index ON messages (id);
 
     CREATE TABLE IF NOT EXISTS variables (
         name  TEXT PRIMARY KEY,

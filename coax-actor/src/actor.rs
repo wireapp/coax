@@ -1076,16 +1076,11 @@ impl Actor<Online> {
     fn on_user_connection(&mut self, e: UserEvent<'static>) -> Result<(), Error> {
         if let UserEvent::Connect(_, c) = e {
             debug!(self.logger, "user connection"; "to" => c.to.to_string(), "status" => c.status.as_str());
-            match self.resolve_user(&c.to, true) {
-                Err(e) => error!(self.logger, "failed to resolve peer";
-                                 "user"  => c.to.to_string(),
-                                 "error" => format!("{:?}", e)),
-                Ok(None) => warn!(self.logger, "user connection peer not found";
-                                  "user" => c.to.to_string()),
-                Ok(Some(usr)) => {
-                    self.state.user.dbase.insert_connection(&c)?;
-                    self.state.bcast.send(Pkg::Contact(usr, Connection::from_api(c))).unwrap()
-                }
+            if let Some(usr) = self.resolve_user(&c.to, true)? {
+                self.state.user.dbase.insert_connection(&c)?;
+                self.state.bcast.send(Pkg::Contact(usr, Connection::from_api(c))).unwrap()
+            } else {
+                warn!(self.logger, "user connection peer not found"; "user" => c.to.to_string())
             }
         }
         Ok(())
@@ -1104,30 +1099,17 @@ impl Actor<Online> {
                "creator" => conv.creator.to_string(),
                "type"    => format!("{:?}", conv.typ));
 
-        match self.resolve_user(&conv.creator, true) {
-            Ok(Some(_)) => {}
-            Ok(None) => {
-                warn!(self.logger, "conversation creator not found";
-                      "user" => conv.creator.to_string());
-                return Ok(())
-            }
-            Err(e) => {
-                error!(self.logger, "failed to resolve conversation creator";
-                       "user"  => conv.creator.to_string(),
-                       "error" => format!("{:?}", e));
-                return Ok(())
-            }
+        if self.resolve_user(&conv.creator, true)?.is_none() {
+            warn!(self.logger, "conversation creator not found"; "user" => conv.creator.to_string());
+            return Ok(())
         }
 
         let mut v = Vec::with_capacity(conv.members.others.len());
         for m in conv.members.others {
-            match self.resolve_user(&m.id, true) {
-                Ok(Some(_)) => v.push(m),
-                Ok(None) => warn!(self.logger, "conversation member not found";
-                                  "user"  => m.id.to_string()),
-                Err(e) => error!(self.logger, "failed to resolve member";
-                                 "user"  => m.id.to_string(),
-                                 "error" => format!("{:?}", e))
+            if self.resolve_user(&m.id, true)?.is_some() {
+                v.push(m)
+            } else {
+                warn!(self.logger, "conversation member not found"; "user" => m.id.to_string())
             }
         }
         conv.members.others = v;
@@ -1151,18 +1133,9 @@ impl Actor<Online> {
                "id"    => e.id.to_string(),
                "users" => format!("{:?}", users.iter().map(UserId::as_uuid).collect::<Vec<_>>()));
 
-        match self.resolve_conversation(&e.id) {
-            Ok(None) => {
-                warn!(self.logger, "conversation not found"; "id" => e.id.to_string());
-                return Ok(())
-            }
-            Err(err) => {
-                error!(self.logger, "failed to resolve conversation";
-                       "id"    => e.id.to_string(),
-                       "error" => format!("{:?}", err));
-                return Ok(())
-            }
-            Ok(Some(_)) => {}
+        if self.resolve_conversation(&e.id)?.is_none() {
+            warn!(self.logger, "conversation not found"; "id" => e.id.to_string());
+            return Ok(())
         }
 
         let mut m = Vec::new();
@@ -1171,28 +1144,19 @@ impl Actor<Online> {
                 m.push(self.me().clone());
                 continue
             }
-            match self.resolve_user(&u, true) {
-                Ok(Some(usr)) => {
-                    self.state.user.dbase.insert_members(&e.id, &[&u])?;
-                    {
-                        let mid = ConvId::rand().to_string();
-                        let msg = NewMessage::joined(&mid, &e.id, &e.time, &usr.id);
-                        self.state.user.dbase.insert_message(&msg)?
-                    }
-                    self.resolve_clients(&u)?;
-                    m.push(usr)
+            if let Some(usr) = self.resolve_user(&u, true)? {
+                self.state.user.dbase.insert_members(&e.id, &[&u])?;
+                {
+                    let mid = ConvId::rand().to_string();
+                    let msg = NewMessage::joined(&mid, &e.id, &e.time, &usr.id);
+                    self.state.user.dbase.insert_message(&msg)?
                 }
-                Ok(None) => {
-                    info!(self.logger, "unknown member joined";
-                        "conv" => e.id.to_string(),
-                        "user" => u.to_string())
-                }
-                Err(err) => {
-                    error!(self.logger, "failed to resolve joining member";
-                        "conv"  => e.id.to_string(),
-                        "user"  => u.to_string(),
-                        "error" => format!("{:?}", err))
-                }
+                self.resolve_clients(&u)?;
+                m.push(usr)
+            } else {
+                warn!(self.logger, "unknown member joined";
+                      "conv" => e.id.to_string(),
+                      "user" => u.to_string())
             }
         }
         self.state.bcast.send(Pkg::MembersAdd(e.time, e.id, m)).unwrap();
@@ -1210,77 +1174,60 @@ impl Actor<Online> {
         debug!(self.logger, "new message"; "conversation" => e.id.to_string());
 
         let usr =
-            match self.resolve_user(&e.from, true) {
-                Ok(Some(usr)) => usr,
-                Ok(None) => {
-                    warn!(self.logger, "unknown sender"; "user" => e.from.to_string());
-                    return Ok(())
-                }
-                Err(err) => {
-                    error!(self.logger, "failed to resolve message sender";
-                           "user"  => e.from.to_string(),
-                           "error" => format!("{:?}", err));
-                    return Ok(())
-                }
+            if let Some(usr) = self.resolve_user(&e.from, true)? {
+                usr
+            } else {
+                warn!(self.logger, "unknown sender"; "user" => e.from.to_string());
+                return Ok(())
             };
 
-        match self.resolve_client(&usr.id, &msg.sender) {
-            Ok(None) =>
-                warn!(self.logger, "unknown sender client";
-                      "user"   => e.from.to_string(),
-                      "client" => msg.sender.as_str()),
-            Err(err) =>
-                error!(self.logger, "failed to resolve sender client";
-                       "user"   => e.from.to_string(),
-                       "client" => msg.sender.as_str(),
-                       "error"  => format!("{:?}", err)),
-            Ok(Some(_)) => {}
+        if self.resolve_client(&usr.id, &msg.sender)?.is_none() {
+            warn!(self.logger, "unknown sender client";
+                  "user"   => e.from.to_string(),
+                  "client" => msg.sender.as_str())
         }
 
-        match self.resolve_conversation(&e.id) {
-            Ok(None) => {
-                warn!(self.logger, "message for unknown conversation";
-                      "id"   => e.id.to_string(),
-                      "user" => e.from.to_string());
-                return Ok(())
-            }
-            Err(err) => {
-                error!(self.logger, "failed tor resolve conversation for message";
-                       "id"    => e.id.to_string(),
-                       "user"  => e.from.to_string(),
-                       "error" => format!("{:?}", err));
-                return Ok(())
-            }
-            Ok(Some(_)) => {}
+        if self.resolve_conversation(&e.id)?.is_none() {
+            warn!(self.logger, "message for unknown conversation";
+                  "id"   => e.id.to_string(),
+                  "user" => e.from.to_string());
+            return Ok(())
         }
 
         match msg.decrypt(&e.from, &self.state.user.device.cbox) {
             Ok((session, mut plain)) => {
-                if plain.text.has_text() { // TODO: consider other message types
-                    let mid = plain.text.get_message_id();
-                    let text = plain.text.get_text().get_content();
-                    let mut nmsg = NewMessage::text(mid, &e.id, &e.time, &e.from, &msg.sender, text);
-                    nmsg.set_status(MessageStatus::Received);
-                    self.state.user.dbase.insert_message(&nmsg)?;
-                }
-                session.save()?;
-                let data = if plain.text.has_text() {
-                    MessageData::Text(plain.text.take_text().take_content())
+                let mid = plain.text.take_message_id();
+                debug!(self.logger, "message"; "id" => mid);
+                if plain.text.has_text() {
+                    debug!(self.logger, "text message");
+                    let text = plain.text.take_text().take_content();
+                    {
+                        let mut nmsg = NewMessage::text(&mid, &e.id, &e.time, &e.from, &msg.sender, &text);
+                        nmsg.set_status(MessageStatus::Received);
+                        self.state.user.dbase.insert_message(&nmsg)?;
+                    }
+                    self.state.user.dbase.update_conv_time(&e.id, e.time.timestamp())?;
+                    let message = data::Message {
+                        id:     plain.text.take_message_id(),
+                        conv:   e.id,
+                        time:   e.time,
+                        user:   usr,
+                        client: Some(msg.sender),
+                        status: MessageStatus::Received,
+                        data:   MessageData::Text(text)
+                    };
+                    self.state.bcast.send(Pkg::Message(message)).unwrap()
+                } else if plain.text.has_confirmation() {
+                    let id = plain.text.take_confirmation().take_message_id();
+                    debug!(self.logger, "confirmation"; "message" => id);
+                    if let Some(cid) = self.state.user.dbase.message_conversation_id(&id)? {
+                        self.state.user.dbase.update_message_status(&cid, &id, MessageStatus::Delivered)?;
+                        self.state.bcast.send(Pkg::MessageUpdate(cid, id, e.time, MessageStatus::Delivered)).unwrap()
+                    }
                 } else {
                     error!(self.logger, "unsupported message type"); // TODO
-                    return Ok(())
-                };
-                self.state.user.dbase.update_conv_time(&e.id, e.time.timestamp())?;
-                let message = data::Message {
-                    id:     plain.text.take_message_id(),
-                    conv:   e.id,
-                    time:   e.time,
-                    user:   usr,
-                    client: Some(msg.sender),
-                    status: MessageStatus::Received,
-                    data:   data
-                };
-                self.state.bcast.send(Pkg::Message(message)).unwrap();
+                }
+                session.save()?
             }
             Err(err) => {
                 error!(self.logger, "failed to decrypt";

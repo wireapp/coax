@@ -713,8 +713,10 @@ impl Coax {
         debug!(self.log, "on_message_update"; "conv" => c.to_string(), "id" => id);
         if let Some(mut ch) = self.channels.borrow_mut().get_mut(&c) {
             if let Some(mut msg) = ch.get_msg_mut(&id) {
-                if s == MessageStatus::Sent {
-                    msg.set_time(t.with_timezone(&self.timezone))
+                match s {
+                    MessageStatus::Sent      => msg.set_time(t.with_timezone(&self.timezone)),
+                    MessageStatus::Delivered => msg.set_delivered(),
+                    _                        => {}
                 }
             }
         } else {
@@ -1083,7 +1085,10 @@ impl Coax {
                         if m.status == MessageStatus::Created {
                             msg.set_error()
                         } else {
-                            msg.set_time(m.time.with_timezone(&this.timezone))
+                            msg.set_time(m.time.with_timezone(&this.timezone));
+                            if m.status == MessageStatus::Delivered {
+                                msg.set_delivered()
+                            }
                         }
                         chan.push_front_msg(&m.id, msg)
                     }

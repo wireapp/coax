@@ -279,6 +279,7 @@ impl Message {
         lbl.set_margin_top(6);
         lbl.set_margin_bottom(6);
         lbl.set_hexpand(true);
+        lbl.set_valign(Align::Start);
         lbl.set_halign(Align::Fill);
         lbl.set_xalign(0.0);
         lbl.set_line_wrap(true);
@@ -335,6 +336,7 @@ impl Message {
             return ()
         }
         let check = gtk::Label::new(Some("\u{2705}"));
+        check.set_valign(Align::Start);
         check.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         let tooltip = dt.format("Delivered at %T").to_string();
         check.set_tooltip_text(Some(tooltip.as_ref()));

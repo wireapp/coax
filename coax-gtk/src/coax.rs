@@ -715,7 +715,7 @@ impl Coax {
             if let Some(mut msg) = ch.get_msg_mut(&id) {
                 match s {
                     MessageStatus::Sent      => msg.set_time(t.with_timezone(&self.timezone)),
-                    MessageStatus::Delivered => msg.set_delivered(),
+                    MessageStatus::Delivered => msg.set_delivered(t.with_timezone(&self.timezone)),
                     _                        => {}
                 }
             }
@@ -1086,9 +1086,6 @@ impl Coax {
                             msg.set_error()
                         } else {
                             msg.set_time(m.time.with_timezone(&this.timezone));
-                            if m.status == MessageStatus::Delivered {
-                                msg.set_delivered()
-                            }
                         }
                         chan.push_front_msg(&m.id, msg)
                     }

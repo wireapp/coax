@@ -173,7 +173,7 @@ impl Channel {
     }
 
     pub fn push_front_msg(&mut self, id: &str, m: Message) {
-        if let Some(ref time) = m.dtime {
+        if let Some(ref time) = m.datetime {
             if time.date() != self.date_lower && !self.model.is_empty() {
                 self.push_front_date()
             }
@@ -184,7 +184,7 @@ impl Channel {
     }
 
     pub fn push_msg(&mut self, id: &str, m: Message) {
-        if let Some(ref time) = m.dtime {
+        if let Some(ref time) = m.datetime {
             if time.date() != self.date_upper || self.model.is_empty() {
                 let dm = Message::date(time.date());
                 self.message_list.add(&dm.row)
@@ -239,11 +239,12 @@ impl Channel {
 
 #[derive(Debug, Clone)]
 pub struct Message {
-    dtime: Option<DateTime<Local>>,
-    row:   gtk::ListBoxRow,
-    grid:  gtk::Grid,
-    icon:  gtk::Image,
-    time:  gtk::Label
+    datetime:  Option<DateTime<Local>>,
+    row:       gtk::ListBoxRow,
+    grid:      gtk::Grid,
+    icon:      gtk::Image,
+    time:      gtk::Label,
+    delivered: bool
 }
 
 impl Message {
@@ -287,11 +288,12 @@ impl Message {
         row.show_all();
 
         Message {
-            dtime: dt,
-            row:   row,
-            grid:  grid,
-            icon:  img,
-            time:  time
+            datetime:  dt,
+            row:       row,
+            grid:      grid,
+            icon:      img,
+            time:      time,
+            delivered: false
         }
     }
 
@@ -315,11 +317,12 @@ impl Message {
         row.show_all();
 
         Message {
-            dtime: Some(d.and_hms(0, 0, 0)),
-            row:   row,
-            grid:  grid,
-            icon:  gtk::Image::new(),
-            time:  time
+            datetime:  Some(d.and_hms(0, 0, 0)),
+            row:       row,
+            grid:      grid,
+            icon:      gtk::Image::new(),
+            time:      time,
+            delivered: false
         }
     }
 
@@ -327,12 +330,17 @@ impl Message {
         self.row.get_index()
     }
 
-    pub fn set_delivered(&mut self) {
-        let check = gtk::Label::new(Some("✅"));
+    pub fn set_delivered(&mut self, dt: DateTime<Local>) {
+        if self.delivered {
+            return ()
+        }
+        let check = gtk::Label::new(Some("\u{2705}"));
         check.get_style_context().map(|ctx| ctx.add_class("dim-label"));
-        check.set_tooltip_text(Some("Message has been delivered successfully."));
+        let tooltip = dt.format("Delivered at %T").to_string();
+        check.set_tooltip_text(Some(tooltip.as_ref()));
         check.show();
-        self.grid.attach(&check, 2, 2, 1, 1)
+        self.grid.attach(&check, 2, 2, 1, 1);
+        self.delivered = true
     }
 
     pub fn set_time(&mut self, dt: DateTime<Local>) {
@@ -341,7 +349,7 @@ impl Message {
         }
         let tstr = dt.format("%T").to_string();
         self.time.set_markup(&format!("<small>{}</small>", tstr));
-        self.dtime = Some(dt);
+        self.datetime = Some(dt);
         self.grid.attach(&self.time, 2, 0, 1, 1)
     }
 

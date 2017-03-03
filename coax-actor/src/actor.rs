@@ -85,6 +85,12 @@ struct Device {
     cbox:   CBox<FileStore>
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Delivery {
+    OneShot,
+    Persistent
+}
+
 // Init state operations ////////////////////////////////////////////////////
 
 impl Actor<Init> {
@@ -861,7 +867,7 @@ impl Actor<Online> {
                             let mut d = Decoder::default(ReadIter::new(Cursor::new(data)));
                             if let Ok(nm) = d.from_json() {
                                 let mut p = send::Params { conv: q.conv, message: nm };
-                                let dtime = self.send_message(&mut p, &g)?;
+                                let dtime = self.send_message(&mut p, &g, Delivery::Persistent)?;
                                 self.dequeue(&q.id, &p.conv)?;
                                 if let Ok(msgid) = String::from_utf8(q.id) {
                                     let pkg = Pkg::MessageUpdate(p.conv.clone(), msgid, dtime, MessageStatus::Sent);
@@ -889,7 +895,7 @@ impl Actor<Online> {
     }
 
     /// Send a message to some conversation.
-    pub fn send_message(&mut self, params: &mut send::Params, msg: &GenericMessage) -> Result<DateTime<UTC>, Error> {
+    pub fn send_message(&mut self, params: &mut send::Params, msg: &GenericMessage, del: Delivery) -> Result<DateTime<UTC>, Error> {
         debug!(self.logger, "sending message"; "conv" => params.conv.to_string(), "id" => msg.get_message_id());
         let on_error = |_, e| {
             if error::is_unauthorised(&e) {
@@ -920,9 +926,11 @@ impl Actor<Online> {
             self.state.client.send(&params, &creds.token).map_err(From::from)
         })?;
 
-        self.state.user.dbase.update_message_status(&params.conv, msg.get_message_id(), MessageStatus::Sent)?;
-        self.state.user.dbase.update_message_time(&params.conv, msg.get_message_id(), &mismatch.time)?;
-        self.state.user.dbase.update_conv_time(&params.conv, mismatch.time.timestamp())?;
+        if del == Delivery::Persistent {
+            self.state.user.dbase.update_message_status(&params.conv, msg.get_message_id(), MessageStatus::Sent)?;
+            self.state.user.dbase.update_message_time(&params.conv, msg.get_message_id(), &mismatch.time)?;
+            self.state.user.dbase.update_conv_time(&params.conv, mismatch.time.timestamp())?;
+        }
 
         Ok(mismatch.time)
     }

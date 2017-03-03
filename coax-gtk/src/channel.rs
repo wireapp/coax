@@ -2,6 +2,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{Date, DateTime, Local};
+use coax_api::conv::ConvType;
 use coax_api::types::{Name, ConvId};
 use ffi;
 use fnv::FnvHashMap;
@@ -13,6 +14,7 @@ use util::hash;
 
 #[derive(Clone)]
 pub struct Channel {
+    ctype:        ConvType,
     image:        gtk::Image,
     name_label:   gtk::Label,
     sub_label:    gtk::Label,
@@ -30,7 +32,7 @@ pub struct Channel {
 
 impl Channel {
     pub fn one_to_one(dt: &DateTime<Local>, id: &ConvId, u: &mut res::User) -> Channel {
-        let ch = Channel::new(dt, id, &Some(Name::new(u.name.clone())), u.icon_medium());
+        let ch = Channel::new(ConvType::OneToOne, dt, id, &Some(Name::new(u.name.clone())), u.icon_medium());
         u.handle.as_ref().map(|h| ch.set_sub(h.as_str()));
         ch
     }
@@ -41,12 +43,12 @@ impl Channel {
             let ico = buf.scale_simple(48, 48, InterpType::Bilinear).unwrap();
             gtk::Image::new_from_pixbuf(Some(&ico))
         };
-        let ch = Channel::new(dt, id, n, img);
+        let ch = Channel::new(ConvType::Group, dt, id, n, img);
         ch.set_sub(&format!("{} participants", len));
         ch
     }
 
-    fn new(dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, img: gtk::Image) -> Channel {
+    fn new(ct: ConvType, dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, img: gtk::Image) -> Channel {
         let channel_row = gtk::ListBoxRow::new();
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
@@ -124,6 +126,7 @@ impl Channel {
         }));
 
         let ch = Channel {
+            ctype:        ct,
             image:        img,
             name_label:   name_label,
             sub_label:    sub_label,
@@ -142,6 +145,10 @@ impl Channel {
         ch.set_name(n.as_ref().unwrap_or(&Name::new("N/A")).as_str());
         ch.set_time(dt);
         ch
+    }
+
+    pub fn conv_type(&self) -> ConvType {
+        self.ctype
     }
 
     pub fn is_init(&self) -> bool {

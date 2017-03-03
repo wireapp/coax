@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use channel::{Channel, Message};
 use chrono::{DateTime, Local, UTC};
-use coax_actor::{Actor, Error, Pkg};
+use coax_actor::{Actor, Error, Pkg, Delivery};
 use coax_actor::actor::{Init, Connected, Offline, Online};
 use coax_actor::config;
 use coax_api::conv::ConvType;
@@ -688,7 +688,14 @@ impl Coax {
                 } else {
                     ch.update_time(&mtime)
                 }
-                self.convlist.invalidate_sort()
+                self.convlist.invalidate_sort();
+                if ch.conv_type() == ConvType::OneToOne {
+                    let future = self.send_confirmation(&m.conv, &m.id)
+                        .map_err(with!(logger => move |e| {
+                            error!(logger, "failed to send confirmation"; "error" => format!("{:?}", e))
+                        }));
+                    self.futures.send(boxed(future)).unwrap();
+                }
             }
         } else {
             let conv_id = m.conv.to_string();
@@ -699,7 +706,7 @@ impl Coax {
                         this.on_conversation(c);
                         this.on_message(m)
                     } else {
-                        error!(this.log, "Failed to resolve conversation"; "id" => conv_id)
+                        error!(this.log, "failed to resolve conversation"; "id" => conv_id)
                     }
                 }))
                 .map_err(with!(logger => move |e| {
@@ -960,6 +967,16 @@ impl Coax {
             })
     }
 
+    fn send_confirmation(&self, c: &ConvId, id: &str) -> impl Future<Item=(), Error=Error> {
+        debug!(self.log, "send confirmation"; "conv" => c.to_string(), "msg" => id);
+        let msg  = MsgBuilder::new().delivered(id).finish();
+        let this = self.clone();
+        self.prepare_message(c, msg, Delivery::OneShot)
+            .and_then(with!(this => move |(m, p)| {
+                this.send(p, m, Delivery::OneShot).map(|_| ())
+            }))
+    }
+
     fn send_message(&self, id: &ConvId, msg: GenericMessage) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "send message"; "conv" => id.to_string(), "id" => msg.get_message_id());
         let this = self.clone();
@@ -979,10 +996,10 @@ impl Coax {
                 futures::finished(())
             }))
             .and_then(with!(this, id => move |()| {
-                this.prepare_message(&id, msg)
+                this.prepare_message(&id, msg, Delivery::Persistent)
             }))
             .and_then(with!(this => move |(msg, params)| {
-                this.send(params, msg)
+                this.send(params, msg, Delivery::Persistent)
             }))
             .map(with!(this, id, mid => move |dt| {
                 let mut channels = this.channels.borrow_mut();
@@ -1135,16 +1152,20 @@ impl Coax {
             }))
     }
 
-    fn prepare_message(&self, id: &ConvId, msg: GenericMessage) -> impl Future<Item=(GenericMessage, send::Params), Error=Error> {
+    fn prepare_message(&self, id: &ConvId, msg: GenericMessage, del: Delivery) -> impl Future<Item=(GenericMessage, send::Params), Error=Error> {
         debug!(self.log, "prepare message future"; "conv" => id.to_string(), "id" => msg.get_message_id());
         let actor = self.actor.clone();
         self.pool_loc.spawn_fn(with!(id => move || {
             let mut act = actor.lock().unwrap();
             match *act {
-                Some(Io::Offline(ref mut a)) => {
+                Some(Io::Offline(ref mut a)) if del != Delivery::OneShot => {
                     a.store_message(&id, &msg)?;
                     let p = a.prepare_message(&id, &msg)?;
                     a.enqueue(msg.get_message_id().as_bytes(), &p, &msg)?;
+                    Ok((msg, p))
+                }
+                Some(Io::Online(ref mut a)) if del == Delivery::OneShot => {
+                    let p = a.prepare_message(&id, &msg)?;
                     Ok((msg, p))
                 }
                 Some(Io::Online(ref mut a)) => {
@@ -1158,7 +1179,7 @@ impl Coax {
         }))
     }
 
-    fn send(&self, mut params: send::Params, msg: GenericMessage) -> impl Future<Item=DateTime<UTC>, Error=Error> {
+    fn send(&self, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<UTC>, Error=Error> {
         debug!(self.log, "send future"; "conv" => params.conv.to_string(), "id" => msg.get_message_id());
         let sync = self.sync.clone();
         self.pool_rem.spawn_fn(move || {
@@ -1166,8 +1187,10 @@ impl Coax {
                 {
                     let mut act = sync.lock().unwrap();
                     if let Some(ref mut a) = *act {
-                        if let Ok(dt) = a.send_message(&mut params, &msg) {
-                            a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?;
+                        if let Ok(dt) = a.send_message(&mut params, &msg, del) {
+                            if del != Delivery::OneShot {
+                                a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?
+                            }
                             return Ok(dt)
                         }
                     } else {

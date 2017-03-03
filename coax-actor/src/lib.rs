@@ -31,6 +31,6 @@ pub mod config;
 pub mod error;
 pub mod pkg;
 
-pub use actor::{Actor, Inbox};
+pub use actor::{Actor, Inbox, Delivery};
 pub use error::Error;
 pub use pkg::Pkg;

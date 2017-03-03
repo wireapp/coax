@@ -231,14 +231,15 @@ impl Database {
     }
 
     /// Update connection status.
-    pub fn update_connection(&self, uid: &UserId, s: ConnectStatus) -> Result<(), Error> {
+    pub fn update_connection(&self, uid: &UserId, s: ConnectStatus) -> Result<bool, Error> {
         use schema::connections::dsl::*;
         debug!(self.logger, "updating connection"; "to" => uid.to_string(), "status" => s.as_str());
         let val = s.into() : u8 as i16;
         update(connections.find(uid.as_slice()))
             .set(status.eq(val))
-            .execute(&self.conn)?;
-        Ok(())
+            .execute(&self.conn)
+            .map(|n| n > 0)
+            .map_err(From::from)
     }
 
     /// Select a `Conversation` by ID.
@@ -285,13 +286,14 @@ impl Database {
     }
 
     /// Update conversation time.
-    pub fn update_conv_time(&self, cid: &ConvId, t: i64) -> Result<(), Error> {
+    pub fn update_conv_time(&self, cid: &ConvId, t: i64) -> Result<bool, Error> {
         use schema::conversations::dsl::*;
         debug!(self.logger, "updating conversation time"; "value" => t);
         update(conversations.find(cid.as_slice()))
             .set(time.eq(t))
-            .execute(&self.conn)?;
-        Ok(())
+            .execute(&self.conn)
+            .map(|n| n > 0)
+            .map_err(From::from)
     }
 
     /// Insert a new conversation.
@@ -413,23 +415,25 @@ impl Database {
     }
 
     /// Update message status.
-    pub fn update_message_status(&self, cid: &ConvId, mid: &str, s: MessageStatus) -> Result<(), Error> {
+    pub fn update_message_status(&self, cid: &ConvId, mid: &str, s: MessageStatus) -> Result<bool, Error> {
         use schema::messages::dsl::*;
         debug!(self.logger, "updating message status"; "id" => mid, "status" => format!("{:?}", s));
         update(messages.find((cid.as_slice(), mid)))
             .set(status.eq(s as i16))
-            .execute(&self.conn)?;
-        Ok(())
+            .execute(&self.conn)
+            .map(|n| n > 0)
+            .map_err(From::from)
     }
 
     /// Update message time.
-    pub fn update_message_time(&self, cid: &ConvId, mid: &str, t: &DateTime<UTC>) -> Result<(), Error> {
+    pub fn update_message_time(&self, cid: &ConvId, mid: &str, t: &DateTime<UTC>) -> Result<bool, Error> {
         use schema::messages::dsl::*;
         debug!(self.logger, "updating message time"; "id" => mid, "time" => t.timestamp());
         update(messages.find((cid.as_slice(), mid)))
             .set(time.eq(t.timestamp()))
-            .execute(&self.conn)?;
-        Ok(())
+            .execute(&self.conn)
+            .map(|n| n > 0)
+            .map_err(From::from)
     }
 
     /// Select conversation ID corresponding to message ID.

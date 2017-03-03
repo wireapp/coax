@@ -4,6 +4,7 @@ use uuid::Uuid;
 
 pub struct Init;
 pub struct Text;
+pub struct Confirm;
 
 pub struct Builder<T> {
     msg: GenericMessage,
@@ -27,6 +28,14 @@ impl<T> Builder<T> {
         let mut t = messages::Text::new();
         t.set_content(txt.into());
         self.msg.set_text(t);
+        self.cast()
+    }
+
+    pub fn delivered<S: Into<String>>(mut self, id: S) -> Builder<Confirm> {
+        let mut m = messages::Confirmation::new();
+        m.set_message_id(id.into());
+        m.set_field_type(messages::Confirmation_Type::DELIVERED);
+        self.msg.set_confirmation(m);
         self.cast()
     }
 

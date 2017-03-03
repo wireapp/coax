@@ -31,6 +31,8 @@ use glib_sys;
 use gtk::prelude::*;
 use gtk::{self, Builder, Button, MenuButton, HeaderBar, Window};
 use gtk::{MessageDialog, MessageType, ButtonsType, Orientation};
+#[cfg(all(unix, not(target_os = "macos")))]
+use notify_rust::{Notification, NotificationHint};
 use poll::Loop;
 use profile::{self, ProfileView};
 use res;
@@ -656,7 +658,7 @@ impl Coax {
                 self.hide_info()
             }
             Pkg::Disconnected              => self.show_info("Connection lost. Reconnecting ..."),
-            Pkg::Message(m)                => self.on_message(m),
+            Pkg::Message(m)                => self.on_message(app, m),
             Pkg::MessageUpdate(c, m, t, s) => self.on_message_update(m, c, t, s),
             Pkg::Conversation(c)           => self.on_conversation(c),
             Pkg::Contact(u, c)             => self.on_contact(app, u, c),
@@ -666,7 +668,7 @@ impl Coax {
         false
     }
 
-    fn on_message(&self, m: coax_data::Message<'static>) {
+    fn on_message(&self, app: &gtk::Application, m: coax_data::Message<'static>) {
         debug!(self.log, "on_message"; "conv" => m.conv.to_string(), "id" => m.id);
         let this   = self.clone();
         let logger = self.log.clone();
@@ -676,6 +678,7 @@ impl Coax {
                 let mtime   = m.time.with_timezone(&self.timezone);
                 let mut res = self.res.borrow_mut();
                 let mut usr = res.user_mut(&m.user.id).unwrap();
+                self.show_notification(app, &usr, &m);
                 if ch.is_init() {
                     let message = match m.data {
                         MessageData::Text(ref txt) => Message::text(Some(mtime), &mut usr, txt),
@@ -701,10 +704,10 @@ impl Coax {
             let conv_id = m.conv.to_string();
             info!(self.log, "message for unresolved conversation"; "conv" => conv_id);
             let future = self.conversation(&m.conv)
-                .map(with!(this  => move |conv| {
+                .map(with!(this, app => move |conv| {
                     if let Some(c) = conv {
                         this.on_conversation(c);
-                        this.on_message(m)
+                        this.on_message(&app, m)
                     } else {
                         error!(this.log, "failed to resolve conversation"; "id" => conv_id)
                     }
@@ -1373,6 +1376,30 @@ impl Coax {
 
     fn hide_info(&self) {
         self.revealer.set_reveal_child(false)
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn show_notification(&self, app: &gtk::Application, u: &res::User, m: &coax_data::Message) {
+        if app.get_active_window().as_ref().map(|w| w.has_toplevel_focus()).unwrap_or(false) {
+            return ()
+        }
+        if let MessageData::Text(ref txt) = m.data {
+            Notification::new()
+                .appname("coax")
+                .summary(&format!("New message from {}", u.name))
+                .body(&txt.chars().take(128).collect::<String>())
+                .icon("coax")
+                .hint(NotificationHint::Category("im.received".into()))
+                .show()
+                .map(|_| ())
+                .unwrap_or_else(|e| {
+                    warn!(self.log, "error showing system notification"; "error" => format!("{}", e))
+                })
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn show_notification(&self, _a: &gtk::Application, _u: &res::User, _m: &coax_data::Message) {
     }
 }
 

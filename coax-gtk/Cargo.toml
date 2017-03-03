@@ -50,3 +50,5 @@ slog               = { version = ">= 1.0", features = ["std", "max_level_debug" 
 slog-term          = ">= 0.5"
 url                = ">= 1.1"
 
+[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
+notify-rust = ">= 3.2"

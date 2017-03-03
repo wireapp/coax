@@ -25,6 +25,8 @@ extern crate json;
 #[macro_use]
 extern crate lazy_static;
 extern crate libc;
+#[cfg(all(unix, not(target_os = "macos")))]
+extern crate notify_rust;
 extern crate pango_sys;
 extern crate proteus;
 extern crate quick_error;

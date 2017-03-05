@@ -254,7 +254,7 @@ dependencies = [
  "gtk 0.1.1 (git+https://github.com/gtk-rs/gtk)",
  "gtk-sys 0.3.2 (git+https://github.com/gtk-rs/sys)",
  "json-codec 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)",
- "lazy_static 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.21 (registry+https://github.com/rust-lang/crates.io-index)",
  "notify-rust 3.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl 0.9.7 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -475,7 +475,7 @@ dependencies = [
 [[package]]
 name = "gio"
 version = "0.1.1"
-source = "git+https://github.com/gtk-rs/gio#a7e8f44f48272e260944d0511dbf76755b16e3bd"
+source = "git+https://github.com/gtk-rs/gio#14bee750da72daba43fe9b5799c2f5724a7af98c"
 dependencies = [
  "bitflags 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "gio-sys 0.3.2 (git+https://github.com/gtk-rs/sys)",
@@ -500,7 +500,7 @@ dependencies = [
 [[package]]
 name = "glib"
 version = "0.1.1"
-source = "git+https://github.com/gtk-rs/glib#6e1750d4f7db48cc4e853e3e0b7a3defdedd673d"
+source = "git+https://github.com/gtk-rs/glib#93cadce6e8e117d8364db4103c857359e30ed1a4"
 dependencies = [
  "bitflags 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "glib-sys 0.3.2 (git+https://github.com/gtk-rs/sys)",
@@ -532,7 +532,7 @@ dependencies = [
 [[package]]
 name = "gtk"
 version = "0.1.1"
-source = "git+https://github.com/gtk-rs/gtk#7a4b9660fec3a73dcd068d03f8dc8eb76805a79f"
+source = "git+https://github.com/gtk-rs/gtk#4c21640eb4b88f25831d2f6f7638fa531c0f2ad8"
 dependencies = [
  "bitflags 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cairo-rs 0.1.1 (git+https://github.com/gtk-rs/cairo)",
@@ -618,7 +618,7 @@ dependencies = [
 
 [[package]]
 name = "lazy_static"
-version = "0.2.2"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
@@ -779,7 +779,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "bitflags 0.7.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "foreign-types 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "lazy_static 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lazy_static 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "libc 0.2.21 (registry+https://github.com/rust-lang/crates.io-index)",
  "openssl-sys 0.9.7 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
@@ -1260,7 +1260,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum isatty 0.1.3 (registry+https://github.com/rust-lang/crates.io-index)" = "fa500db770a99afe2a0f2229be2a3d09c7ed9d7e4e8440bf71253141994e240f"
 "checksum json-codec 0.4.2 (registry+https://github.com/rust-lang/crates.io-index)" = "8c13437d7efe974ec0d71cdae55a1195b86c3d1eb905b4cd7d8fccd96f8f435b"
 "checksum kernel32-sys 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7507624b29483431c0ba2d82aece8ca6cdba9382bff4ddd0f7490560c056098d"
-"checksum lazy_static 0.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "6abe0ee2e758cd6bc8a2cd56726359007748fbf4128da998b65d0b70f881e19b"
+"checksum lazy_static 0.2.4 (registry+https://github.com/rust-lang/crates.io-index)" = "7291b1dd97d331f752620b02dfdbc231df7fc01bf282a00769e1cdb963c460dc"
 "checksum lazycell 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "ce12306c4739d86ee97c23139f3a34ddf0387bbf181bc7929d287025a8c3ef6b"
 "checksum libc 0.2.21 (registry+https://github.com/rust-lang/crates.io-index)" = "88ee81885f9f04bff991e306fea7c1c60a5f0f9e409e99f6b40e3311a3363135"
 "checksum libsodium-sys 0.0.14 (registry+https://github.com/rust-lang/crates.io-index)" = "cbbc6e46017815abf8698de0ed4847fad45fd8cad2909ac38ac6de79673c1ad1"

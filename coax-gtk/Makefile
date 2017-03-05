@@ -21,6 +21,10 @@ install: install-$(OS)
 install-linux:
 	cargo install --force $(INSTALL_TYPE) --root=$(CARGO_HOME)
 	sed "s%@bindir@%$(CARGO_HOME)/bin%g" src/gtk/coax.desktop > $(XDG_DATA_HOME)/applications/coax.desktop
+	mkdir -p $(XDG_DATA_HOME)/icons/hicolor/scalable/apps
+	cp src/gtk/coax.svg $(XDG_DATA_HOME)/icons/hicolor/scalable/apps
+	mkdir -p $(XDG_DATA_HOME)/icons/hicolor/48x48/apps
+	-rsvg-convert -w 48 -h 48 src/gtk/coax.svg -o $(XDG_DATA_HOME)/icons/hicolor/48x48/apps/coax.png
 
 install-darwin:
 	cargo install --force $(INSTALL_TYPE) --root=$(CARGO_HOME)

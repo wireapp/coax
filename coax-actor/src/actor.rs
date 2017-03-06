@@ -1,4 +1,6 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -18,7 +20,8 @@ use coax_api::prekeys::{PreKey, LastPreKey};
 use coax_api::token::{AccessToken, Credentials};
 use coax_api::types::{Label, Password, ClientId, UserId, ConvId, Name};
 use coax_api::user::{self, Connection as UserConnection, ConnectStatus, User as ApiUser, AssetKey, AssetToken};
-use coax_api_proto::GenericMessage;
+use coax_api_proto::{Builder, GenericMessage};
+use coax_api_proto::builder::Confirm;
 use coax_client;
 use coax_client::error::{Error as ClientError, Void};
 use coax_client::client::Client;
@@ -935,6 +938,18 @@ impl Actor<Online> {
         Ok(mismatch.time)
     }
 
+    fn send_message_confirmations(&mut self, to_confirm: HashMap<ConvId, Builder<Confirm>>) {
+        debug!(self.logger, "sending message confirmations"; "conversations" => to_confirm.len());
+        for (c, b) in to_confirm {
+            let msg = b.finish();
+            let res = self.prepare_message(&c, &msg)
+                .and_then(|mut p| self.send_message(&mut p, &msg, Delivery::OneShot));
+            if let Err(e) = res {
+                error!(self.logger, "error sending confirmation message"; "error" => format!("{:?}", e))
+            }
+        }
+    }
+
     pub fn load_conversations<'a>(&mut self, from: Option<PagingState<db::C>>, num: usize) -> Result<db::Page<Vec<Conversation<'a>>, db::C>, Error> {
         debug!(self.logger, "loading conversations from database");
         self.state.user.dbase.conversations(from, num).map_err(From::from)
@@ -971,6 +986,8 @@ impl Actor<Online> {
             return Ok(false)
         }
 
+        let mut to_confirm = HashMap::new(); // TODO: Limit size
+
         let has_more = error::retry3x(|r: Option<React<()>>| {
             self.react(r)?;
             let more;
@@ -990,7 +1007,7 @@ impl Actor<Online> {
                         match item {
                             Ok(n) => {
                                 last_id = Some(n.id.clone());
-                                self.on_notification(n)?
+                                self.on_notification(n, Some(&mut to_confirm))?
                             }
                             Err(e) => error!(self.logger, "failed to parse notification";
                                 "prev"  => last_id.as_ref().map(|id| id.to_string()).unwrap_or("N/A".into()),
@@ -1007,10 +1024,11 @@ impl Actor<Online> {
         if let Some(ref id) = last_id {
             self.state.user.dbase.set_last_notification(id)?
         }
+        self.send_message_confirmations(to_confirm);
         Ok(has_more)
     }
 
-    fn on_notification(&mut self, n: Notification<'static>) -> Result<(), Error> {
+    fn on_notification(&mut self, n: Notification<'static>, mut to_confirm: Option<&mut HashMap<ConvId, Builder<Confirm>>>) -> Result<(), Error> {
         debug!(self.logger, "notification"; "id" => n.id.to_string());
         if self.state.user.dbase.has_notification(&n.id)? {
             debug!(self.logger, "notification already seen"; "id" => n.id.to_string());
@@ -1031,7 +1049,7 @@ impl Actor<Online> {
                     match ety {
                         EventType::ConvCreate     => self.on_conv_create(e)?,
                         EventType::ConvMemberJoin => self.on_member_join(e)?,
-                        EventType::ConvMessageAdd => self.on_message_add(e)?,
+                        EventType::ConvMessageAdd => self.on_message_add(e, &mut to_confirm)?,
                         _                         => {}
                     }
                 }
@@ -1171,7 +1189,7 @@ impl Actor<Online> {
         Ok(())
     }
 
-    fn on_message_add(&mut self, e: ConvEvent<'static>) -> Result<(), Error> {
+    fn on_message_add(&mut self, e: ConvEvent<'static>, to_confirm: &mut Option<&mut HashMap<ConvId, Builder<Confirm>>>) -> Result<(), Error> {
         let msg =
             if let ConvEventData::Encrypted(msg) = e.data {
                 msg
@@ -1215,6 +1233,16 @@ impl Actor<Online> {
                         self.state.user.dbase.insert_message(&nmsg)?;
                     }
                     self.state.user.dbase.update_conv_time(&e.id, e.time.timestamp())?;
+                    if let Some(ref mut confirm) = *to_confirm {
+                        match confirm.entry(e.id.clone()) {
+                            Entry::Occupied(mut e) => {
+                                e.get_mut().add_delivered(mid.as_ref());
+                            }
+                            Entry::Vacant(e) => {
+                                e.insert(Builder::new().delivered(mid.as_ref()));
+                            }
+                        }
+                    }
                     let message = data::Message {
                         id:     mid,
                         conv:   e.id,
@@ -1226,11 +1254,15 @@ impl Actor<Online> {
                     };
                     self.state.bcast.send(Pkg::Message(message)).unwrap()
                 } else if plain.text.has_confirmation() {
-                    let id = plain.text.take_confirmation().take_message_id();
-                    debug!(self.logger, "confirmation"; "message" => id);
-                    if let Some(cid) = self.state.user.dbase.message_conversation_id(&id)? {
-                        self.state.user.dbase.update_message_status(&cid, &id, MessageStatus::Delivered)?;
-                        self.state.bcast.send(Pkg::MessageUpdate(cid, id, e.time, MessageStatus::Delivered)).unwrap()
+                    debug!(self.logger, "confirmation message");
+                    let mut con = plain.text.take_confirmation();
+                    let mut ids = con.take_more_message_ids();
+                    ids.push(con.take_first_message_id());
+                    for id in ids.into_iter() {
+                        if let Some(cid) = self.state.user.dbase.message_conversation_id(&id)? {
+                            self.state.user.dbase.update_message_status(&cid, &id, MessageStatus::Delivered)?;
+                            self.state.bcast.send(Pkg::MessageUpdate(cid, id, e.time, MessageStatus::Delivered)).unwrap()
+                        }
                     }
                 } else {
                     error!(self.logger, "unsupported message type"); // TODO
@@ -1493,7 +1525,7 @@ impl Inbox {
             match wsock.listen() : Result<Notification, ClientError<coax_client::error::Void>> {
                 Ok(n) => {
                     debug!(self.logger, "received"; "id" => n.id.to_string());
-                    if let Err(e) = self.actor.on_notification(n) {
+                    if let Err(e) = self.actor.on_notification(n, None) {
                         error!(self.logger, "error decrypting notification: {}", e)
                     }
                 }

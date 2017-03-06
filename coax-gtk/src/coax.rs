@@ -4,6 +4,7 @@ use std::collections::HashMap;
 use std::ffi::CString;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
@@ -66,7 +67,8 @@ pub struct Coax {
     res:      Rc<RefCell<res::Resources>>,
     actor:    Arc<Mutex<Option<Io>>>,
     sync:     Arc<Mutex<Option<Actor<Online>>>>,
-    inbox:    Arc<Mutex<Option<JoinHandle<()>>>>
+    inbox:    Arc<Mutex<Option<JoinHandle<()>>>>,
+    is_sync:  Arc<AtomicBool>
 }
 
 macro_rules! from_some {
@@ -136,7 +138,8 @@ impl Coax {
             res:      Rc::new(RefCell::new(res::Resources::new())),
             actor:    Arc::new(Mutex::new(Some(Io::Init(actor)))),
             sync:     Arc::new(Mutex::new(None)),
-            inbox:    Arc::new(Mutex::new(None))
+            inbox:    Arc::new(Mutex::new(None)),
+            is_sync:  Arc::new(AtomicBool::new(false))
         };
 
         app.connect_startup(Coax::startup);
@@ -692,7 +695,7 @@ impl Coax {
                     ch.update_time(&mtime)
                 }
                 self.convlist.invalidate_sort();
-                if ch.conv_type() == ConvType::OneToOne {
+                if ch.conv_type() == ConvType::OneToOne && !self.is_sync.load(Ordering::Relaxed) {
                     let future = self.send_confirmation(&m.conv, &m.id)
                         .map_err(with!(logger => move |e| {
                             error!(logger, "failed to send confirmation"; "error" => format!("{:?}", e))
@@ -1246,15 +1249,25 @@ impl Coax {
 
     fn notifications(&self, initial: bool) -> impl Future<Item=(), Error=Error> {
         trace!(self.log, "notifications future");
-        let sync   = self.sync.clone();
-        let logger = self.log.clone();
+        let sync    = self.sync.clone();
+        let is_sync = self.is_sync.clone();
+        let logger  = self.log.clone();
         self.pool_rem.spawn_fn(move || {
             let mut actor = sync.lock().unwrap();
             if let Some(ref mut a) = *actor {
+                is_sync.store(true, Ordering::Relaxed);
                 loop {
                     debug!(logger, "actor getting notifications");
-                    if !a.notifications(!initial)? {
-                        break
+                    match a.notifications(!initial) {
+                        Ok(true)  => {}
+                        Ok(false) => {
+                            is_sync.store(false, Ordering::Relaxed);
+                            break
+                        }
+                        Err(e) => {
+                            is_sync.store(false, Ordering::Relaxed);
+                            return Err(e)
+                        }
                     }
                 }
                 Ok(())

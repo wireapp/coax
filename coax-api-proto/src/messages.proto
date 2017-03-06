@@ -112,8 +112,9 @@ message Confirmation {
     READ = 1;
   }
 
-  required string message_id = 1;
-  required Type type = 2;
+  required Type   type = 2;
+  required string first_message_id = 1;
+  repeated string more_message_ids = 3;
 }
 
 message Location {

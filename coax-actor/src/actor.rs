@@ -1213,12 +1213,15 @@ impl Actor<Online> {
                   "client" => msg.sender.as_str())
         }
 
-        if self.resolve_conversation(&e.id)?.is_none() {
-            warn!(self.logger, "message for unknown conversation";
-                  "id"   => e.id.to_string(),
-                  "user" => e.from.to_string());
-            return Ok(())
-        }
+        let conv =
+            if let Some(conv) = self.resolve_conversation(&e.id)? {
+                conv
+            } else {
+                warn!(self.logger, "message for unknown conversation";
+                      "id"   => e.id.to_string(),
+                      "user" => e.from.to_string());
+                return Ok(())
+            };
 
         match msg.decrypt(&e.from, &self.state.user.device.cbox) {
             Ok((session, mut plain)) => {
@@ -1233,13 +1236,15 @@ impl Actor<Online> {
                         self.state.user.dbase.insert_message(&nmsg)?;
                     }
                     self.state.user.dbase.update_conv_time(&e.id, e.time.timestamp())?;
-                    if let Some(ref mut confirm) = *to_confirm {
-                        match confirm.entry(e.id.clone()) {
-                            Entry::Occupied(mut e) => {
-                                e.get_mut().add_delivered(mid.as_ref());
-                            }
-                            Entry::Vacant(e) => {
-                                e.insert(Builder::new().delivered(mid.as_ref()));
+                    if conv.ctype == ConvType::OneToOne {
+                        if let Some(ref mut confirm) = *to_confirm {
+                            match confirm.entry(e.id.clone()) {
+                                Entry::Occupied(mut e) => {
+                                    e.get_mut().add_delivered(mid.as_ref());
+                                }
+                                Entry::Vacant(e) => {
+                                    e.insert(Builder::new().delivered(mid.as_ref()));
+                                }
                             }
                         }
                     }

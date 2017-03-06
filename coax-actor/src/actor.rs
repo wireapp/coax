@@ -1207,12 +1207,6 @@ impl Actor<Online> {
                 return Ok(())
             };
 
-        if self.resolve_client(&usr.id, &msg.sender)?.is_none() {
-            warn!(self.logger, "unknown sender client";
-                  "user"   => e.from.to_string(),
-                  "client" => msg.sender.as_str())
-        }
-
         let conv =
             if let Some(conv) = self.resolve_conversation(&e.id)? {
                 conv
@@ -1222,6 +1216,13 @@ impl Actor<Online> {
                       "user" => e.from.to_string());
                 return Ok(())
             };
+
+        if self.resolve_client(&usr.id, &msg.sender)?.is_none() {
+            warn!(self.logger, "unknown sender client";
+                  "user"   => e.from.to_string(),
+                  "client" => msg.sender.as_str())
+        }
+
 
         match msg.decrypt(&e.from, &self.state.user.device.cbox) {
             Ok((session, mut plain)) => {

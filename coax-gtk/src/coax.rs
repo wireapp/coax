@@ -715,9 +715,9 @@ impl Coax {
                         error!(this.log, "failed to resolve conversation"; "id" => conv_id)
                     }
                 }))
-                .map_err(with!(logger => move |e| {
+                .map_err(move |e| {
                     error!(logger, "on_message error"; "error" => format!("{}", e))
-                }));
+                });
             self.futures.send(boxed(future)).unwrap()
         }
     }
@@ -733,7 +733,23 @@ impl Coax {
                 }
             }
         } else {
-            error!(self.log, "message update for unknown conversation"; "conv" => c.to_string())
+            info!(self.log, "message update for unresolved conversation"; "conv" => c.to_string());
+            let this   = self.clone();
+            let logger = self.log.clone();
+            let future = self.conversation(&c)
+                .map(with!(this => move |conv| {
+                    if let Some(c) = conv {
+                        let cid = c.id.clone();
+                        this.on_conversation(c);
+                        this.on_message_update(id, cid, t, s)
+                    } else {
+                        error!(this.log, "failed to resolve conversation"; "id" => c.to_string());
+                    }
+                }))
+                .map_err(move |e| {
+                    error!(logger, "on_message_update error"; "error" => format!("{}", e))
+                });
+            self.futures.send(boxed(future)).unwrap()
         }
     }
 

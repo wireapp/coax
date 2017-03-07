@@ -1,6 +1,7 @@
 use std;
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::collections::hash_map::Entry;
 use std::ffi::CString;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -16,10 +17,11 @@ use coax_actor::actor::{Init, Connected, Offline, Online};
 use coax_actor::config;
 use coax_api::conv::ConvType;
 use coax_api::message::send;
-use coax_api::types::{Label, Name, Email, Password, UserId, ConvId};
+use coax_api::types::{Label, Name, Email, Password, UserId, ConvId, random_uuid};
 use coax_api::user::{self, ConnectStatus};
 use coax_api_proto::{Builder as MsgBuilder, GenericMessage};
-use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus};
+use coax_client::error::{Error as ClientError};
+use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus, ConvStatus};
 use coax_data::profiles::ProfileDb;
 use coax_net::http::tls;
 use contact::Contacts;
@@ -323,7 +325,7 @@ impl Coax {
                         let value = input.get_buffer()
                             .map(|buf| buf.get_char_count() > 0)
                             .unwrap_or(false);
-                        this.send_btn.set_sensitive(value);
+                        this.send_btn.set_sensitive(value && ch.status() == ConvStatus::Current);
                     } else {
                         this.send_btn.set_sensitive(false)
                     }
@@ -333,11 +335,20 @@ impl Coax {
             }
         }));
 
-        let button   = self.send_btn.clone();
-        let convlist = self.convlist.clone();
+        let button = self.send_btn.clone();
 
-        input.get_buffer().map(|buf| buf.connect_changed(with!(button, convlist => move |buf| {
-            button.set_sensitive(convlist.get_selected_row().is_some() && buf.get_char_count() > 0)
+        input.get_buffer().map(|buf| buf.connect_changed(with!(button, this => move |buf| {
+            let status =
+                if let Some(row) = this.convlist.get_selected_row() {
+                    ffi::get_data(&row, &ffi::KEY_ID)
+                        .and_then(|id| {
+                            this.channels.borrow().get(id).map(Channel::status)
+                        })
+                } else {
+                    None
+                };
+            let value = status == Some(ConvStatus::Current) && buf.get_char_count() > 0;
+            button.set_sensitive(value)
         })));
 
         let send = SimpleAction::new("send", None);
@@ -350,9 +361,6 @@ impl Coax {
             let buf = from_some!(input.get_buffer());
             let (mut s, mut e) = buf.get_bounds();
             let txt = from_some!(buf.get_text(&s, &e, false));
-            if txt.is_empty() {
-                return ()
-            }
             let msg = MsgBuilder::new().text(txt).finish();
             let log = this.log.clone();
             let fut = this.send_message(cid, msg).map_err(move |e| {
@@ -674,7 +682,8 @@ impl Coax {
             Pkg::MessageUpdate(c, m, t, s) => self.on_message_update(m, c, t, s),
             Pkg::Conversation(c)           => self.on_conversation(c),
             Pkg::Contact(u, c)             => self.on_contact(app, u, c),
-            Pkg::MembersAdd(_, c, m)       => self.on_members_add(c, m),
+            Pkg::MembersAdd(d, c, m)       => self.on_member_change(d, c, m, ConvStatus::Current),
+            Pkg::MembersRemove(d, c, m)    => self.on_member_change(d, c, m, ConvStatus::Previous),
             Pkg::Fin                       => return true
         }
         false
@@ -692,14 +701,9 @@ impl Coax {
                 let mut usr = res.user_mut(&m.user.id).unwrap();
                 self.show_notification(app, &usr, &m);
                 if ch.is_init() {
-                    let message = match m.data {
-                        MessageData::Text(ref txt) => Message::text(Some(mtime), &mut usr, txt),
-                        MessageData::MemberJoined  => {
-                            let txt = format!("{} has joined this conversation.", usr.name);
-                            Message::text(Some(mtime), &mut usr, &txt)
-                        }
-                    };
-                    ch.push_msg(&m.id, message)
+                    if let MessageData::Text(ref txt) = m.data {
+                        ch.push_msg(&m.id, Message::text(Some(mtime), &mut usr, txt))
+                    }
                 } else {
                     ch.update_time(&mtime)
                 }
@@ -775,7 +779,8 @@ impl Coax {
         }
 
         if conv.ctype == ConvType::Group {
-            let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
+            let mut ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
+            ch.set_status(conv.status);
             self.convlist.add(ch.channel_row());
             self.channels.borrow_mut().insert(conv.id, ch);
             self.convlist.show_all();
@@ -788,7 +793,8 @@ impl Coax {
             let mut res = self.res.borrow_mut();
             if let Some(mut u) = res.user_mut(&uid) {
                 conv.set_name(Name::new(u.name.clone()));
-                let ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
+                let mut ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
+                ch.set_status(conv.status);
                 self.convlist.add(ch.channel_row());
                 self.channels.borrow_mut().insert(conv.id, ch);
                 self.convlist.show_all();
@@ -812,7 +818,8 @@ impl Coax {
                         this.ensure_user_res(&user);
                         let mut res = this.res.borrow_mut();
                         let mut usr = res.user_mut(&user.id).unwrap();
-                        let     chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
+                        let mut chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
+                        chn.set_status(conv.status);
                         this.convlist.add(chn.channel_row());
                         this.channels.borrow_mut().insert(conv.id, chn);
                         this.convlist.show_all()
@@ -849,25 +856,43 @@ impl Coax {
         }));
     }
 
-    fn on_members_add(&self, cid: ConvId, members: Vec<User<'static>>) {
-        debug!(self.log, "on_members_add"; "conv" => cid.to_string());
-        if self.channels.borrow().get(&cid).is_none() {
-            let this   = self.clone();
-            let future = self.conversation(&cid)
-                .map(with!(this => move |conv| {
-                    if let Some(c) = conv {
-                        this.on_conversation(c)
-                    } else {
-                        error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
+    fn on_member_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus) {
+        debug!(self.log, "on_member_change"; "conv" => cid.to_string());
+        match self.channels.borrow_mut().entry(cid.clone()) {
+            Entry::Vacant(_) => {
+                let this   = self.clone();
+                let future = self.conversation(&cid)
+                    .map(with!(this => move |conv| {
+                        if let Some(c) = conv {
+                            this.on_conversation(c)
+                        } else {
+                            error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
+                        }
+                    }))
+                    .map_err(with!(this => move |e| {
+                        error!(this.log, "on_member_change error"; "error" => format!("{}", e))
+                    }));
+                self.futures.send(boxed(future)).unwrap()
+            }
+            Entry::Occupied(mut e) => {
+                let local = dt.with_timezone(&self.timezone);
+                for m in members {
+                    if m.id == self.me.borrow().id {
+                        e.get_mut().set_status(s)
                     }
-                }))
-                .map_err(with!(this => move |e| {
-                    error!(this.log, "on_members_add error"; "error" => format!("{}", e))
-                }));
-            self.futures.send(boxed(future)).unwrap()
-        }
-        for m in members {
-            self.ensure_user_res(&m)
+                    if e.get().is_init() {
+                        self.ensure_user_res(&m);
+                        let mut res = self.res.borrow_mut();
+                        let mut usr = res.user_mut(&m.id).unwrap();
+                        let txt = match s {
+                            ConvStatus::Current  => format!("{} has joined this conversation.", m.name.as_str()),
+                            ConvStatus::Previous => format!("{} has left this conversation.", m.name.as_str())
+                        };
+                        let mid = random_uuid().to_string();
+                        e.get_mut().push_msg(&mid, Message::text(Some(local), &mut usr, &txt))
+                    }
+                }
+            }
         }
     }
 
@@ -1129,6 +1154,10 @@ impl Coax {
                                 let txt = format!("{} has joined this conversation.", usr.name);
                                 Message::text(None, &mut usr, &txt)
                             }
+                            MessageData::MemberLeft => {
+                                let txt = format!("{} has left this conversation.", usr.name);
+                                Message::text(None, &mut usr, &txt)
+                            }
                         };
                         if m.status == MessageStatus::Created {
                             msg.set_error()
@@ -1212,17 +1241,30 @@ impl Coax {
 
     fn send(&self, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<UTC>, Error=Error> {
         debug!(self.log, "send future"; "conv" => params.conv.to_string(), "id" => msg.get_message_id());
-        let sync = self.sync.clone();
+        let sync   = self.sync.clone();
+        let logger = self.log.clone();
         self.pool_rem.spawn_fn(move || {
             loop {
                 {
                     let mut act = sync.lock().unwrap();
                     if let Some(ref mut a) = *act {
-                        if let Ok(dt) = a.send_message(&mut params, &msg, del) {
-                            if del != Delivery::OneShot {
-                                a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?
+                        match a.send_message(&mut params, &msg, del) {
+                            Ok(dt) => {
+                                if del != Delivery::OneShot {
+                                    a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?
+                                }
+                                return Ok(dt)
                             }
-                            return Ok(dt)
+                            Err(e@Error::MsgSend(ClientError::Error(send::Error::NotFound))) => {
+                                if del != Delivery::OneShot {
+                                    a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?
+                                }
+                                return Err(e)
+                            }
+                            Err(e) =>
+                                error!(logger, "failed to send message";
+                                       "id"    => msg.get_message_id(),
+                                       "error" => format!("{}", e))
                         }
                     } else {
                         return Err(Error::Message("invalid app state"))

@@ -18,7 +18,7 @@ use coax_api::events::{self, Notification, Event, EventType, UserEvent, ConvEven
 use coax_api::message::send;
 use coax_api::prekeys::{PreKey, LastPreKey};
 use coax_api::token::{AccessToken, Credentials};
-use coax_api::types::{Label, Password, ClientId, UserId, ConvId, Name};
+use coax_api::types::{Label, Password, ClientId, UserId, ConvId, Name, random_uuid};
 use coax_api::user::{self, Connection as UserConnection, ConnectStatus, User as ApiUser, AssetKey, AssetToken};
 use coax_api_proto::{Builder, GenericMessage};
 use coax_api_proto::builder::Confirm;
@@ -26,7 +26,7 @@ use coax_client;
 use coax_client::error::{Error as ClientError, Void};
 use coax_client::client::Client;
 use coax_client::listen::Listener;
-use coax_data::{self as data, Database, Connection, Conversation, User};
+use coax_data::{self as data, Database, Connection, Conversation, User, ConvStatus};
 use coax_data::{MessageStatus, MessageData, NewMessage, QueueItem, QueueItemData};
 use coax_data::db::{self, PagingState};
 use coax_net::http::tls::{Tls, TlsStream};
@@ -149,8 +149,12 @@ impl Actor<Init> {
 
     /// Load an existing user profile from local storage.
     pub fn profile(&mut self, user_id: &UserId) -> Result<UserData, Error> {
-        let assets = self.mk_assets_dir(&user_id)?;
-        let dbase  = self.open_database(&user_id)?;
+        let assets = self.mk_assets_dir(user_id)?;
+
+        let db_path = self.database_path(user_id)?;
+        Database::run_migrations(&self.logger, &db_path)?;
+
+        let dbase = self.open_database(user_id)?;
 
         let user = dbase.user(user_id)?
             .ok_or(Error::Profile(user_id.clone(), "user not found"))?;
@@ -239,7 +243,11 @@ impl Actor<Connected> {
             self.state.client.user_login(p).map_err(From::from)
         })?;
 
-        let user   = self.lookup_self(&credentials.token)?;
+        let user = self.lookup_self(&credentials.token)?;
+
+        let db_path = self.database_path(&user.id)?;
+        Database::run_migrations(&self.logger, &db_path)?;
+
         let dbase  = self.open_database(&user.id)?;
         let cbox   = self.open_cryptobox(&user.id)?;
         let assets = self.mk_assets_dir(&user.id)?;
@@ -1047,10 +1055,11 @@ impl Actor<Online> {
                 Event::Conv(ety, e) => {
                     debug!(self.logger, "event"; "type" => format!("{:?}", ety));
                     match ety {
-                        EventType::ConvCreate     => self.on_conv_create(e)?,
-                        EventType::ConvMemberJoin => self.on_member_join(e)?,
-                        EventType::ConvMessageAdd => self.on_message_add(e, &mut to_confirm)?,
-                        _                         => {}
+                        EventType::ConvCreate      => self.on_conv_create(e)?,
+                        EventType::ConvMemberJoin  => self.on_member_join(e)?,
+                        EventType::ConvMemberLeave => self.on_member_leave(e)?,
+                        EventType::ConvMessageAdd  => self.on_message_add(e, &mut to_confirm)?,
+                        _                          => {}
                     }
                 }
                 Event::Unknown(e) => {
@@ -1164,28 +1173,81 @@ impl Actor<Online> {
             return Ok(())
         }
 
-        let mut m = Vec::new();
+        let mut members = Vec::new();
         for u in users.as_ref() {
             if *u == self.me().id {
-                m.push(self.me().clone());
+                members.push(self.me().clone());
+                self.state.user.dbase.update_conv_status(&e.id, ConvStatus::Current)?;
                 continue
             }
             if let Some(usr) = self.resolve_user(&u, true)? {
-                self.state.user.dbase.insert_members(&e.id, &[&u])?;
-                {
-                    let mid = ConvId::rand().to_string();
-                    let msg = NewMessage::joined(&mid, &e.id, &e.time, &usr.id);
-                    self.state.user.dbase.insert_message(&msg)?
-                }
                 self.resolve_clients(&u)?;
-                m.push(usr)
+                members.push(usr)
             } else {
-                warn!(self.logger, "unknown member joined";
-                      "conv" => e.id.to_string(),
-                      "user" => u.to_string())
+                warn!(self.logger, "unknown member joined"; "conv" => e.id.to_string(), "user" => u.to_string())
             }
         }
-        self.state.bcast.send(Pkg::MembersAdd(e.time, e.id, m)).unwrap();
+
+        {
+            let mids: Vec<&UserId> = members.iter().map(|m| &m.id).collect();
+            self.state.user.dbase.insert_members(&e.id, &mids)?;
+        }
+
+        for m in &members {
+            let mid = random_uuid().to_string();
+            let msg = NewMessage::joined(&mid, &e.id, &e.time, &m.id);
+            self.state.user.dbase.insert_message(&msg)?
+        }
+
+        self.state.bcast.send(Pkg::MembersAdd(e.time, e.id, members)).unwrap();
+
+        Ok(())
+    }
+
+    fn on_member_leave(&mut self, e: ConvEvent<'static>) -> Result<(), Error> {
+        let users =
+            if let ConvEventData::Leave(users) = e.data {
+                users
+            } else {
+                return Ok(())
+            };
+
+        debug!(self.logger, "members leave conversation";
+               "id"    => e.id.to_string(),
+               "users" => format!("{:?}", users.iter().map(UserId::as_uuid).collect::<Vec<_>>()));
+
+        if self.resolve_conversation(&e.id)?.is_none() {
+            warn!(self.logger, "conversation not found"; "id" => e.id.to_string());
+            return Ok(())
+        }
+
+        let mut members = Vec::new();
+        for u in users.as_ref() {
+            if *u == self.me().id {
+                members.push(self.me().clone());
+                self.state.user.dbase.update_conv_status(&e.id, ConvStatus::Previous)?;
+                continue
+            }
+            if let Some(usr) = self.resolve_user(&u, true)? {
+                members.push(usr)
+            } else {
+                warn!(self.logger, "unknown member left"; "conv" => e.id.to_string(), "user" => u.to_string())
+            }
+        }
+
+        {
+            let mids: Vec<&UserId> = members.iter().map(|m| &m.id).collect();
+            self.state.user.dbase.remove_members(&e.id, &mids)?;
+        }
+
+        for m in &members {
+            let mid = random_uuid().to_string();
+            let msg = NewMessage::left(&mid, &e.id, &e.time, &m.id);
+            self.state.user.dbase.insert_message(&msg)?
+        }
+
+        self.state.bcast.send(Pkg::MembersRemove(e.time, e.id, members)).unwrap();
+
         Ok(())
     }
 
@@ -1373,16 +1435,19 @@ impl<S> Actor<S> {
         CBox::open(store).map_err(From::from)
     }
 
-    fn open_database(&self, uid: &UserId) -> Result<Database, Error> {
-        let mut root = PathBuf::from(&self.config.data.root);
-        root.push(uid.to_string());
-        if !root.exists() {
-            DirBuilder::new().create(&root)?;
+    fn database_path(&self, uid: &UserId) -> Result<PathBuf, Error> {
+        let mut p = PathBuf::from(&self.config.data.root);
+        p.push(uid.to_string());
+        if !p.exists() {
+            DirBuilder::new().create(&p)?;
         }
-        root.push("main.db");
-        let path  = root.to_str().ok_or(Error::Message("/data/root contains invalid utf-8"))?;
-        let dbase = Database::open(&self.logger, path)?;
-        dbase.setup_schema()?;
+        p.push("main.db");
+        Ok(p)
+    }
+
+    fn open_database(&self, uid: &UserId) -> Result<Database, Error> {
+        let path  = self.database_path(uid)?;
+        let dbase = Database::open(&self.logger, &path)?;
         Ok(dbase)
     }
 

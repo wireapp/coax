@@ -9,6 +9,7 @@ pub enum Pkg {
     Conversation(Conversation<'static>),
     Contact(User<'static>, Connection),
     MembersAdd(DateTime<UTC>, ConvId, Vec<User<'static>>),
+    MembersRemove(DateTime<UTC>, ConvId, Vec<User<'static>>),
     Disconnected,
     Connected,
     Fin

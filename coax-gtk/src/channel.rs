@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{Date, DateTime, Local};
 use coax_api::conv::ConvType;
+use coax_data::ConvStatus;
 use coax_api::types::{Name, ConvId};
 use ffi;
 use fnv::FnvHashMap;
@@ -25,6 +26,7 @@ pub struct Channel {
     message_view: gtk::ScrolledWindow,
     model:        FnvHashMap<u64, Message>,
     init:         bool,
+    status:       ConvStatus,
     autoscroll:   Rc<AtomicBool>,
     date_lower:   Date<Local>,
     date_upper:   Date<Local>
@@ -137,6 +139,7 @@ impl Channel {
             message_view: message_view,
             model:        FnvHashMap::default(),
             init:         false,
+            status:       ConvStatus::Current,
             autoscroll:   autoscroll,
             date_lower:   dt.date(),
             date_upper:   dt.date()
@@ -157,6 +160,14 @@ impl Channel {
 
     pub fn set_init(&mut self) {
         self.init = true
+    }
+
+    pub fn status(&self) -> ConvStatus {
+        self.status
+    }
+
+    pub fn set_status(&mut self, s: ConvStatus) {
+        self.status = s
     }
 
     pub fn channel_row(&self) -> &gtk::ListBoxRow {

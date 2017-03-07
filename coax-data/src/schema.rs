@@ -40,6 +40,7 @@ table! {
         creator -> Binary,
         muted   -> Bool,
         time    -> BigInt,
+        status  -> SmallInt,
     }
 }
 
@@ -89,10 +90,9 @@ table! {
 pub const SCHEMA: &'static str = r"
     BEGIN;
 
-    CREATE TABLE IF NOT EXISTS meta (
-        version     INTEGER PRIMARY KEY,
-        description TEXT,
-        date        BIGINT
+    CREATE TABLE IF NOT EXISTS __diesel_schema_migrations (
+        version VARCHAR(50) PRIMARY KEY NOT NULL,
+        run_on  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
     ) WITHOUT ROWID;
 
     CREATE TABLE IF NOT EXISTS inbox (
@@ -149,6 +149,7 @@ pub const SCHEMA: &'static str = r"
         creator BLOB NOT NULL,
         muted   BOOLEAN NOT NULL,
         time    BIGINT NOT NULL,
+        status  INTEGER NOT NULL,
 
         FOREIGN KEY (creator) REFERENCES users ON DELETE RESTRICT
     ) WITHOUT ROWID;

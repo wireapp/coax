@@ -17,9 +17,10 @@ pub mod profiles;
 mod model;
 mod schema;
 mod util;
+mod migrations;
 
 pub use db::Database;
 pub use error::Error;
-pub use model::{User, Client, Conversation, Connection};
+pub use model::{User, Client, Conversation, Connection, ConvStatus};
 pub use model::{Message, MessageData, MessageStatus, NewMessage};
 pub use model::{QueueItem, QueueItemData, QueueItemType, NewQueueItem};

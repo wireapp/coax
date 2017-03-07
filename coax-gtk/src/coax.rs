@@ -301,7 +301,9 @@ impl Coax {
             }
         });
 
-        self.convlist.connect_row_selected(with!(this, app => move |_, row| {
+        let input: gtk::TextView = self.builder.get_object("main-text-input").unwrap();
+
+        self.convlist.connect_row_selected(with!(this, app, input => move |_, row| {
             if let Some(r) = row.as_ref() {
                 ffi::get_data(r, &ffi::KEY_ID).map(|id| {
                     if let Some(ch) = this.channels.borrow().get(id) {
@@ -318,7 +320,10 @@ impl Coax {
                         this.mainview.insert_row(0);
                         this.mainview.attach(ch.message_view(), 0, 0, 1, 1);
                         this.mainview.show_all();
-                        this.send_btn.set_sensitive(true)
+                        let value = input.get_buffer()
+                            .map(|buf| buf.get_char_count() > 0)
+                            .unwrap_or(false);
+                        this.send_btn.set_sensitive(value);
                     } else {
                         this.send_btn.set_sensitive(false)
                     }
@@ -328,10 +333,14 @@ impl Coax {
             }
         }));
 
-        let input: gtk::TextView = self.builder.get_object("main-text-input").unwrap();
+        let button   = self.send_btn.clone();
+        let convlist = self.convlist.clone();
 
-        let send   = SimpleAction::new("send", None);
-        let button = self.send_btn.clone();
+        input.get_buffer().map(|buf| buf.connect_changed(with!(button, convlist => move |buf| {
+            button.set_sensitive(convlist.get_selected_row().is_some() && buf.get_char_count() > 0)
+        })));
+
+        let send = SimpleAction::new("send", None);
         send.connect_activate(with!(this => move |_, _| {
             if !button.is_sensitive() {
                 return ()

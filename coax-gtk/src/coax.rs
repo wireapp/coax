@@ -1261,9 +1261,7 @@ impl Coax {
                                 return Err(e)
                             }
                             Err(e) =>
-                                error!(logger, "failed to send message";
-                                       "id"    => msg.get_message_id(),
-                                       "error" => format!("{}", e))
+                                error!(logger, "failed to send message"; "id" => msg.get_message_id(), "error" => format!("{}", e))
                         }
                     } else {
                         return Err(Error::Message("invalid app state"))

@@ -1056,8 +1056,8 @@ impl Actor<Online> {
                     debug!(self.logger, "event"; "type" => format!("{:?}", ety));
                     match ety {
                         EventType::ConvCreate      => self.on_conv_create(e)?,
-                        EventType::ConvMemberJoin  => self.on_member_join(e)?,
-                        EventType::ConvMemberLeave => self.on_member_leave(e)?,
+                        EventType::ConvMemberJoin  => self.on_members_change(e)?,
+                        EventType::ConvMemberLeave => self.on_members_change(e)?,
                         EventType::ConvMessageAdd  => self.on_message_add(e, &mut to_confirm)?,
                         _                          => {}
                     }
@@ -1156,15 +1156,15 @@ impl Actor<Online> {
         Ok(())
     }
 
-    fn on_member_join(&mut self, e: ConvEvent<'static>) -> Result<(), Error> {
-        let users =
-            if let ConvEventData::Join(users) = e.data {
-                users
-            } else {
-                return Ok(())
-            };
+    fn on_members_change(&mut self, e: ConvEvent<'static>) -> Result<(), Error> {
+        let (users, status) = match e.data {
+            ConvEventData::Join(users)  => (users, ConvStatus::Current),
+            ConvEventData::Leave(users) => (users, ConvStatus::Previous),
+            _                           => return Ok(())
+        };
 
-        debug!(self.logger, "members join conversation";
+        debug!(self.logger, "conversation members change";
+               "type"  => if status == ConvStatus::Current { "join" } else { "leave" },
                "id"    => e.id.to_string(),
                "users" => format!("{:?}", users.iter().map(UserId::as_uuid).collect::<Vec<_>>()));
 
@@ -1177,76 +1177,34 @@ impl Actor<Online> {
         for u in users.as_ref() {
             if *u == self.me().id {
                 members.push(self.me().clone());
-                self.state.user.dbase.update_conv_status(&e.id, ConvStatus::Current)?;
+                self.state.user.dbase.update_conv_status(&e.id, status)?;
                 continue
             }
             if let Some(usr) = self.resolve_user(&u, true)? {
-                self.resolve_clients(&u)?;
                 members.push(usr)
             } else {
-                warn!(self.logger, "unknown member joined"; "conv" => e.id.to_string(), "user" => u.to_string())
+                warn!(self.logger, "unknown member"; "conv" => e.id.to_string(), "user" => u.to_string())
             }
         }
 
         {
             let mids: Vec<&UserId> = members.iter().map(|m| &m.id).collect();
-            self.state.user.dbase.insert_members(&e.id, &mids)?;
+            match status {
+                ConvStatus::Current  => self.state.user.dbase.insert_members(&e.id, &mids)?,
+                ConvStatus::Previous => self.state.user.dbase.remove_members(&e.id, &mids)?
+            }
         }
 
         for m in &members {
             let mid = random_uuid().to_string();
-            let msg = NewMessage::joined(&mid, &e.id, &e.time, &m.id);
-            self.state.user.dbase.insert_message(&msg)?
-        }
-
-        self.state.bcast.send(Pkg::MembersAdd(e.time, e.id, members)).unwrap();
-
-        Ok(())
-    }
-
-    fn on_member_leave(&mut self, e: ConvEvent<'static>) -> Result<(), Error> {
-        let users =
-            if let ConvEventData::Leave(users) = e.data {
-                users
-            } else {
-                return Ok(())
+            let msg = match status {
+                ConvStatus::Current  => NewMessage::joined(&mid, &e.id, &e.time, &m.id),
+                ConvStatus::Previous => NewMessage::left(&mid, &e.id, &e.time, &m.id)
             };
-
-        debug!(self.logger, "members leave conversation";
-               "id"    => e.id.to_string(),
-               "users" => format!("{:?}", users.iter().map(UserId::as_uuid).collect::<Vec<_>>()));
-
-        if self.resolve_conversation(&e.id)?.is_none() {
-            warn!(self.logger, "conversation not found"; "id" => e.id.to_string());
-            return Ok(())
-        }
-
-        let mut members = Vec::new();
-        for u in users.as_ref() {
-            if *u == self.me().id {
-                members.push(self.me().clone());
-                self.state.user.dbase.update_conv_status(&e.id, ConvStatus::Previous)?;
-                continue
-            }
-            if let Some(usr) = self.resolve_user(&u, true)? {
-                members.push(usr)
-            } else {
-                warn!(self.logger, "unknown member left"; "conv" => e.id.to_string(), "user" => u.to_string())
-            }
-        }
-
-        {
-            let mids: Vec<&UserId> = members.iter().map(|m| &m.id).collect();
-            self.state.user.dbase.remove_members(&e.id, &mids)?;
-        }
-
-        for m in &members {
-            let mid = random_uuid().to_string();
-            let msg = NewMessage::left(&mid, &e.id, &e.time, &m.id);
             self.state.user.dbase.insert_message(&msg)?
         }
 
-        self.state.bcast.send(Pkg::MembersRemove(e.time, e.id, members)).unwrap();
+        self.state.bcast.send(Pkg::MembersChange(status, e.time, e.id, members)).unwrap();
 
         Ok(())
     }

@@ -682,8 +682,7 @@ impl Coax {
             Pkg::MessageUpdate(c, m, t, s) => self.on_message_update(m, c, t, s),
             Pkg::Conversation(c)           => self.on_conversation(c),
             Pkg::Contact(u, c)             => self.on_contact(app, u, c),
-            Pkg::MembersAdd(d, c, m)       => self.on_member_change(d, c, m, ConvStatus::Current),
-            Pkg::MembersRemove(d, c, m)    => self.on_member_change(d, c, m, ConvStatus::Previous),
+            Pkg::MembersChange(s, d, c, m) => self.on_members_change(d, c, m, s),
             Pkg::Fin                       => return true
         }
         false
@@ -856,7 +855,7 @@ impl Coax {
         }));
     }
 
-    fn on_member_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus) {
+    fn on_members_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus) {
         debug!(self.log, "on_member_change"; "conv" => cid.to_string());
         match self.channels.borrow_mut().entry(cid.clone()) {
             Entry::Vacant(_) => {

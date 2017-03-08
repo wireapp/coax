@@ -207,6 +207,22 @@ impl<'a> NewClient<'a> {
 
 // Conversation /////////////////////////////////////////////////////////////
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConvStatus {
+    Current  = 0,
+    Previous = 1
+}
+
+impl ConvStatus {
+    pub fn from_i16(i: i16) -> Option<ConvStatus> {
+        match i {
+            0 => Some(ConvStatus::Current),
+            1 => Some(ConvStatus::Previous),
+            _ => None
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
 #[belongs_to(RawUser, foreign_key = "creator")]
 #[has_many(members, foreign_key = "conv")]
@@ -218,11 +234,18 @@ pub struct RawConversation {
     pub ctype:   i16,
     pub creator: Vec<u8>,
     pub muted:   bool,
-    pub time:   i64
+    pub time:    i64,
+    pub status:  i16
 }
 
 impl RawConversation {
     pub fn to_conversation<'a>(self, mm: Vec<UserId>) -> Result<Conversation<'a>, Error> {
+        let status =
+            if let Some(cs) = ConvStatus::from_i16(self.status) {
+                cs
+            } else {
+                return Err(Error::InvalidData("unknown conversation status"))
+            };
         Ok(Conversation {
             id:       as_id(&self.id, "conversation id")?,
             name:     self.name.map(Name::new),
@@ -230,6 +253,7 @@ impl RawConversation {
             creator:  as_id(&self.creator, "user id")?,
             muted:    self.muted,
             time:     from_timestamp(self.time),
+            status:   status,
             members:  mm
         })
     }
@@ -243,6 +267,7 @@ pub struct Conversation<'a> {
     pub creator: UserId,
     pub muted:   bool,
     pub time:    DateTime<UTC>,
+    pub status:  ConvStatus,
     pub members: Vec<UserId>
 }
 
@@ -257,6 +282,11 @@ impl<'a> Conversation<'a> {
             creator: c.creator,
             muted:   c.members.me.muted.unwrap_or(false),
             time:    t,
+            status:  if c.members.me.current {
+                         ConvStatus::Current
+                     } else {
+                         ConvStatus::Previous
+                     },
             members: mm
         }
     }
@@ -274,18 +304,24 @@ pub struct NewConversation<'a> {
     pub ctype:   i16,
     pub creator: &'a [u8],
     pub muted:   bool,
-    pub time:    i64
+    pub time:    i64,
+    pub status:  i16
 }
 
 impl<'a> NewConversation<'a> {
-    pub fn from_api(t: &DateTime<UTC>, c: &'a ApiConv, m: bool) -> NewConversation<'a> {
+    pub fn from_api(t: &DateTime<UTC>, c: &'a ApiConv) -> NewConversation<'a> {
         NewConversation {
             id:       c.id.as_slice(),
             name:     c.name.as_ref().map(|n| n.as_str()),
             ctype:    c.typ.into(): u8 as i16,
             creator:  c.creator.as_slice(),
-            muted:    m,
-            time:     t.timestamp()
+            muted:    c.members.me.muted.unwrap_or(false),
+            time:     t.timestamp(),
+            status:   if c.members.me.current {
+                          ConvStatus::Current as i16
+                      } else {
+                          ConvStatus::Previous as i16
+                      }
         }
     }
 }
@@ -404,6 +440,7 @@ impl RawMessage {
                 MessageData::Text(txt)
             }
             1 => MessageData::MemberJoined,
+            2 => MessageData::MemberLeft,
             _ => return Err(Error::InvalidData("unknown message type"))
         };
         let status =
@@ -427,10 +464,11 @@ impl RawMessage {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MessageData {
     Text(String),
-    MemberJoined
+    MemberJoined,
+    MemberLeft
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageStatus {
     Created   = 0,
     Received  = 1,
@@ -496,6 +534,19 @@ impl<'a> NewMessage<'a> {
             from_usr: user.as_slice(),
             from_clt: None,
             mtype:    1,
+            status:   MessageStatus::Received as i16,
+            text:     None
+        }
+    }
+
+    pub fn left(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, user: &'a UserId) -> NewMessage<'a> {
+        NewMessage {
+            id:       mid,
+            conv:     cid.as_slice(),
+            time:     t.timestamp(),
+            from_usr: user.as_slice(),
+            from_clt: None,
+            mtype:    2,
             status:   MessageStatus::Received as i16,
             text:     None
         }

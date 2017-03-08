@@ -1,10 +1,12 @@
+use std;
+use std::path::Path;
 use std::marker::PhantomData;
 
 use chrono::{DateTime, UTC};
 use coax_api as api;
 use coax_api::types::{ConvId, UserId, ClientId, NotifId};
 use coax_api::user::ConnectStatus;
-use diesel::{insert, delete, update};
+use diesel::{self, insert, delete, update};
 use diesel::connection::SimpleConnection;
 use diesel::expression::sql_literal::sql;
 use diesel::prelude::*;
@@ -13,11 +15,12 @@ use diesel::sqlite::SqliteConnection;
 use diesel::sqlite::query_builder::functions::insert_or_replace;
 use diesel::types::BigInt;
 use error::Error;
-use schema;
-use model::{self, NewMember, NewVar, MessageStatus};
+use migrations;
+use model::{self, NewMember, NewVar, MessageStatus, ConvStatus};
 use model::{NewUser, NewClient, NewConnection, NewConversation, NewNotification};
 use model::{RawUser, RawClient, RawConnection, RawConversation, RawMessage};
 use model::{NewQueueItem, QueueItem, QueueItemType, RawQueueItem};
+use schema;
 use slog::Logger;
 use util::as_id;
 
@@ -32,19 +35,25 @@ const PRAGMAS: &'static str =
        PRAGMA busy_timeout = 5000;"#;
 
 impl Database {
-    pub fn open(g: &Logger, path: &str) -> Result<Database, Error> {
-        let c = SqliteConnection::establish(path)?;
+    pub fn open(g: &Logger, path: &Path) -> Result<Database, Error> {
+        debug!(g, "opening database"; "path" => path.to_string_lossy().as_ref());
+        let p = path.to_str().ok_or(Error::InvalidPath)?;
+        let c = SqliteConnection::establish(p)?;
         let db = Database {
             logger: g.new(o!("context" => "Database")),
             conn:   c
         };
-
         db.conn.batch_execute(PRAGMAS)?;
         Ok(db)
     }
 
-    pub fn setup_schema(&self) -> Result<(), Error> {
-        self.conn.batch_execute(schema::SCHEMA)?;
+    pub fn run_migrations(g: &Logger, path: &Path) -> Result<(), Error> {
+        debug!(g, "running pending database migrations"; "path" => path.to_string_lossy().as_ref());
+        let p = path.to_str().ok_or(Error::InvalidPath)?;
+        let c = SqliteConnection::establish(p)?;
+        c.batch_execute(schema::SCHEMA)?;
+        let mut w = std::io::stderr();
+        diesel::migrations::run_migrations(&c, migrations::all(), &mut w)?;
         Ok(())
     }
 
@@ -296,6 +305,17 @@ impl Database {
             .map_err(From::from)
     }
 
+    /// Update conversation status.
+    pub fn update_conv_status(&self, cid: &ConvId, s: ConvStatus) -> Result<bool, Error> {
+        use schema::conversations::dsl::*;
+        debug!(self.logger, "updating conversation status"; "value" => format!("{:?}", s));
+        update(conversations.find(cid.as_slice()))
+            .set(status.eq(s as i16))
+            .execute(&self.conn)
+            .map(|n| n > 0)
+            .map_err(From::from)
+    }
+
     /// Insert a new conversation.
     pub fn insert_conversation(&self, t: &DateTime<UTC>, c: &api::conv::Conversation) -> Result<(), Error> {
         use schema::conversations::dsl::*;
@@ -305,7 +325,7 @@ impl Database {
             .map(|m| NewMember { id: m.id.as_slice(), conv: ci })
             .collect() : Vec<NewMember>;
         mm.push(NewMember { id: c.members.me.id.as_slice(), conv: ci });
-        let nc = NewConversation::from_api(t, c, c.members.me.muted.unwrap_or(false));
+        let nc = NewConversation::from_api(t, c);
         self.conn.transaction(|| {
             // TODO: upsert
             match conversations.find(ci).first::<RawConversation>(&self.conn) {
@@ -341,13 +361,23 @@ impl Database {
         }
     }
 
-    /// Insert `UserId`s a members into conversation.
+    /// Insert `UserId`s as members into a conversation.
     pub fn insert_members(&self, cid: &ConvId, users: &[&UserId]) -> Result<(), Error> {
         debug!(self.logger, "insert members"; "conv" => cid.to_string());
         let mm: Vec<NewMember> = users.iter()
             .map(|u| NewMember { id: u.as_slice(), conv: cid.as_slice() })
             .collect();
         insert_or_replace(&mm).into(schema::members::table).execute(&self.conn)?;
+        Ok(())
+    }
+
+    /// Remove `UserId`s as members from a conversation.
+    pub fn remove_members(&self, cid: &ConvId, users: &[&UserId]) -> Result<(), Error> {
+        use schema::members::dsl::*;
+        debug!(self.logger, "remove members"; "conv" => cid.to_string());
+        let condition = conv.eq(cid.as_slice())
+            .and(id.eq_any(users.iter().map(|uid| uid.as_slice())));
+        delete(members.filter(condition)).execute(&self.conn)?;
         Ok(())
     }
 

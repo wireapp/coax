@@ -1,3 +1,4 @@
+use diesel::migrations::RunMigrationsError;
 use diesel::result::{self, ConnectionError};
 
 quick_error! {
@@ -16,5 +17,11 @@ quick_error! {
         InvalidData(msg: &'static str) {
             display("invalid data: {}", msg)
         }
+        Migration(e: RunMigrationsError) {
+            display("migration error: {}", e)
+            cause(e)
+            from()
+        }
+        InvalidPath
     }
 }

@@ -23,6 +23,10 @@ pub type ServId  = Id<S>;
 pub type ProvId  = Id<P>;
 pub type NotifId = Id<N>;
 
+pub fn random_uuid() -> Uuid {
+    Uuid::new_v4()
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct Id<T>{
     id: Uuid,

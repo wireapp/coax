@@ -20,7 +20,11 @@ macro_rules! migration {
 }
 
 migration!("2017-03-08+001", ConversationStatus, "convstatus/up.sql", "convstatus/down.sql");
+migration!("2017-03-09+001", MessageUserId, "msguserid/up.sql", "msguserid/down.sql");
 
 pub fn all() -> Vec<Box<Migration>> {
-    vec![Box::new(ConversationStatus())]
+    vec![
+        Box::new(ConversationStatus()),
+        Box::new(MessageUserId())
+    ]
 }

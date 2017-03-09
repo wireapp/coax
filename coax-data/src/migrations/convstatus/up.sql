@@ -1,4 +1,4 @@
--- Add conversation status column.
+-- Add status column to conversations.
 
 CREATE TABLE IF NOT EXISTS conversations_tmp (
     id      BLOB PRIMARY KEY,
@@ -24,3 +24,5 @@ INSERT INTO conversations_tmp (
 DROP TABLE conversations;
 
 ALTER TABLE conversations_tmp RENAME TO conversations;
+
+PRAGMA foreign_key_check(conversations);

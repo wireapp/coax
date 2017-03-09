@@ -1166,7 +1166,16 @@ impl Actor<Online> {
         debug!(self.logger, "conversation members change";
                "type"  => if status == ConvStatus::Current { "join" } else { "leave" },
                "id"    => e.id.to_string(),
+               "from"  => e.from.to_string(),
                "users" => format!("{:?}", users.iter().map(UserId::as_uuid).collect::<Vec<_>>()));
+
+        let sender =
+            if let Some(usr) = self.resolve_user(&e.from, true)? {
+                usr
+            } else {
+                warn!(self.logger, "sending user not found"; "id" => e.from.to_string());
+                return Ok(())
+            };
 
         if self.resolve_conversation(&e.id)?.is_none() {
             warn!(self.logger, "conversation not found"; "id" => e.id.to_string());
@@ -1196,15 +1205,15 @@ impl Actor<Online> {
         }
 
         for m in &members {
-            let mid = random_uuid().to_string();
+            let id  = random_uuid().to_string();
             let msg = match status {
-                ConvStatus::Current  => NewMessage::joined(&mid, &e.id, &e.time, &m.id),
-                ConvStatus::Previous => NewMessage::left(&mid, &e.id, &e.time, &m.id)
+                ConvStatus::Current  => NewMessage::joined(&id, &e.id, &e.time, &e.from, &m.id),
+                ConvStatus::Previous => NewMessage::left(&id, &e.id, &e.time, &e.from, &m.id)
             };
             self.state.user.dbase.insert_message(&msg)?
         }
 
-        self.state.bcast.send(Pkg::MembersChange(status, e.time, e.id, members)).unwrap();
+        self.state.bcast.send(Pkg::MembersChange(status, e.time, e.id, members, sender)).unwrap();
 
         Ok(())
     }

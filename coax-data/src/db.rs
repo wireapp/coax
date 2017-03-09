@@ -425,8 +425,15 @@ impl Database {
             Err(e) => Err(Error::Result(e)),
             Ok(mm) => {
                 let mut vec = Vec::with_capacity(mm.len());
-                for (m, u) in mm {
-                    vec.push(m.to_message(u.to_user()?)?)
+                for (m, s) in mm {
+                    match m.user_id.as_ref().map(|xs| UserId::from_bytes(xs)) {
+                        None            => vec.push(m.to_message(s.to_user()?, None)?),
+                        Some(Some(uid)) => vec.push(m.to_message(s.to_user()?, self.user(&uid)?)?),
+                        Some(None)      => {
+                            error!(self.logger, "invalid messages.user_id"; "conv" => cid.to_string());
+                            return Err(Error::InvalidData("messages.user_id"))
+                        }
+                    }
                 }
                 let ps = from.map(|p| p.forward(vec.len() as i64)).unwrap_or(PagingState::zero());
                 Ok(Page::new(vec, ps))

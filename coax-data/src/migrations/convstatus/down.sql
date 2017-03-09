@@ -1,4 +1,4 @@
--- Remove conversation status column.
+-- Remove status column from conversations.
 
 CREATE TABLE IF NOT EXISTS conversations_tmp (
     id      BLOB PRIMARY KEY,
@@ -23,3 +23,4 @@ DROP TABLE conversations;
 
 ALTER TABLE conversations_tmp RENAME TO conversations;
 
+PRAGMA foreign_key_check(conversations);

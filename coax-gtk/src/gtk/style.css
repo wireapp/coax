@@ -2,3 +2,18 @@ list row#date-header {
     background-color: @theme_bg_color;
 }
 
+list row label#date-text {
+    font-size: large;
+    font-weight: bold;
+}
+
+list row#system-header {
+    color: @theme_selected_fg_color;
+    background-color: @theme_selected_bg_color;
+}
+
+list row label#system-category {
+    font-size: large;
+    font-weight: bold;
+}
+

@@ -34,6 +34,7 @@ use glib_sys;
 use gtk::prelude::*;
 use gtk::{self, Builder, Button, MenuButton, HeaderBar, Window};
 use gtk::{MessageDialog, MessageType, ButtonsType, Orientation};
+use gtk_sys::GTK_STYLE_PROVIDER_PRIORITY_USER;
 #[cfg(all(unix, not(target_os = "macos")))]
 use notify_rust::{Notification, NotificationHint};
 use poll::Loop;
@@ -103,6 +104,9 @@ impl Coax {
         let sendbtn  = builder.get_object("send-button").unwrap();
         let mainview = builder.get_object("mainview").unwrap();
 
+        let css = gtk::CssProvider::new();
+        css.load_from_data(include_str!("gtk/style.css"))?;
+
         let infobar: gtk::InfoBar = builder.get_object("info-bar").unwrap();
         let revealer: gtk::Revealer = builder.get_object("info-revealer").unwrap();
 
@@ -145,7 +149,7 @@ impl Coax {
         };
 
         app.connect_startup(Coax::startup);
-        app.connect_activate(move |app| coax.activate(app));
+        app.connect_activate(move |app| coax.activate(app, css.clone()));
         Ok(app)
     }
 
@@ -160,12 +164,16 @@ impl Coax {
         app.set_app_menu(Some(&menu))
     }
 
-    fn activate(&self, app: &gtk::Application) {
+    fn activate(&self, app: &gtk::Application, css: gtk::CssProvider) {
         trace!(self.log, "activate");
         let this = self.clone();
 
         let window = gtk::ApplicationWindow::new(app);
         window.set_size_request(800, 600);
+
+        window.get_screen().map(|s| {
+            gtk::StyleContext::add_provider_for_screen(&s, &css, GTK_STYLE_PROVIDER_PRIORITY_USER as u32)
+        });
 
         let main: gtk::Box = self.builder.get_object("main").unwrap();
 

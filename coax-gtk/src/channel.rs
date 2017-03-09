@@ -317,7 +317,9 @@ impl Message {
     }
 
     pub fn date(d: Date<Local>) -> Message {
-        let row  = gtk::ListBoxRow::new();
+        let row = gtk::ListBoxRow::new();
+        row.set_name("date-header");
+
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
         grid.set_margin_top(6);

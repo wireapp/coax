@@ -10,7 +10,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use channel::{Channel, Message};
+use channel::{Channel, Message, TextMessage};
 use chrono::{DateTime, Local, UTC};
 use coax_actor::{Actor, Error, Pkg, Delivery};
 use coax_actor::actor::{Init, Connected, Offline, Online};
@@ -685,13 +685,13 @@ impl Coax {
                 self.futures.send(boxed(future)).unwrap();
                 self.hide_info()
             }
-            Pkg::Disconnected              => self.show_info("Connection lost. Reconnecting ..."),
-            Pkg::Message(m)                => self.on_message(app, m),
-            Pkg::MessageUpdate(c, m, t, s) => self.on_message_update(m, c, t, s),
-            Pkg::Conversation(c)           => self.on_conversation(c),
-            Pkg::Contact(u, c)             => self.on_contact(app, u, c),
-            Pkg::MembersChange(s, d, c, m) => self.on_members_change(d, c, m, s),
-            Pkg::Fin                       => return true
+            Pkg::Disconnected                 => self.show_info("Connection lost. Reconnecting ..."),
+            Pkg::Message(m)                   => self.on_message(app, m),
+            Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(m, c, t, s),
+            Pkg::Conversation(c)              => self.on_conversation(c),
+            Pkg::Contact(u, c)                => self.on_contact(app, u, c),
+            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(d, c, m, s, u),
+            Pkg::Fin                          => return true
         }
         false
     }
@@ -745,7 +745,7 @@ impl Coax {
     fn on_message_update(&self, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
         debug!(self.log, "on_message_update"; "conv" => c.to_string(), "id" => id);
         if let Some(mut ch) = self.channels.borrow_mut().get_mut(&c) {
-            if let Some(mut msg) = ch.get_msg_mut(&id) {
+            if let Some(&mut Message::Text(ref mut msg)) = ch.get_msg_mut(&id) {
                 match s {
                     MessageStatus::Sent      => msg.set_time(t.with_timezone(&self.timezone)),
                     MessageStatus::Delivered => msg.set_delivered(t.with_timezone(&self.timezone)),
@@ -863,7 +863,7 @@ impl Coax {
         }));
     }
 
-    fn on_members_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus) {
+    fn on_members_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User>, s: ConvStatus, from: User) {
         debug!(self.log, "on_member_change"; "conv" => cid.to_string());
         match self.channels.borrow_mut().entry(cid.clone()) {
             Entry::Vacant(_) => {
@@ -888,15 +888,22 @@ impl Coax {
                         e.get_mut().set_status(s)
                     }
                     if e.get().is_init() {
-                        self.ensure_user_res(&m);
-                        let mut res = self.res.borrow_mut();
-                        let mut usr = res.user_mut(&m.id).unwrap();
                         let txt = match s {
-                            ConvStatus::Current  => format!("{} has joined this conversation.", m.name.as_str()),
-                            ConvStatus::Previous => format!("{} has left this conversation.", m.name.as_str())
+                            ConvStatus::Current =>
+                                if m.id == from.id {
+                                    format!("{} has joined this conversation.", m.name.as_str())
+                                } else {
+                                    format!("{} has added {} to this conversation.", from.name.as_str(), m.name.as_str())
+                                },
+                            ConvStatus::Previous =>
+                                if m.id == from.id {
+                                    format!("{} has left this conversation.", m.name.as_str())
+                                } else {
+                                    format!("{} has removed {} from this conversation.", from.name.as_str(), m.name.as_str())
+                                }
                         };
                         let mid = random_uuid().to_string();
-                        e.get_mut().push_msg(&mid, Message::text(Some(local), &mut usr, &txt))
+                        e.get_mut().push_msg(&mid, Message::system(local, &txt))
                     }
                 }
             }
@@ -1051,9 +1058,9 @@ impl Coax {
                     let mut res = this.res.borrow_mut();
                     let mut usr = res.user_mut(&this.me.borrow().id).unwrap();
                     if !ch.has_msg(&mid) {
-                        let msg = Message::text(None, &mut usr, &text);
+                        let msg = TextMessage::new(None, &mut usr, &text);
                         msg.start_spinner();
-                        ch.push_msg(&mid, msg)
+                        ch.push_msg(&mid, Message::Text(msg))
                     }
                 }
                 futures::finished(())
@@ -1069,7 +1076,7 @@ impl Coax {
                 if let Some(mut ch) = channels.get_mut(&id) {
                     let loc_time   = dt.with_timezone(&this.timezone);
                     let is_message =
-                        if let Some(mut msg) = ch.get_msg_mut(&mid) {
+                        if let Some(&mut Message::Text(ref mut msg)) = ch.get_msg_mut(&mid) {
                             msg.stop_spinner();
                             msg.set_time(loc_time.clone());
                             true
@@ -1086,7 +1093,7 @@ impl Coax {
             .map_err(with!(this, id, mid => move |e| {
                 let channels = this.channels.borrow();
                 if let Some(ch) = channels.get(&id) {
-                    if let Some(msg) = ch.get_msg(&mid) {
+                    if let Some(&Message::Text(ref msg)) = ch.get_msg(&mid) {
                         msg.set_error()
                     }
                 }
@@ -1152,26 +1159,29 @@ impl Coax {
                         }
                         new_content = true;
                         this.ensure_user_res(&m.user);
+                        let local   = m.time.with_timezone(&this.timezone);
                         let mut res = this.res.borrow_mut();
                         let mut usr = res.user_mut(&m.user.id).unwrap();
-                        let mut msg = match m.data {
-                            MessageData::Text(txt) =>
-                                Message::text(None, &mut usr, &txt),
-                            MessageData::MemberJoined => {
-                                let txt = format!("{} has joined this conversation.", usr.name);
-                                Message::text(None, &mut usr, &txt)
+                        let message = match m.data {
+                            MessageData::Text(txt) => {
+                                let mut msg = TextMessage::new(None, &mut usr, &txt);
+                                if m.status == MessageStatus::Created {
+                                    msg.set_error()
+                                } else {
+                                    msg.set_time(local)
+                                }
+                                Message::Text(msg)
                             }
-                            MessageData::MemberLeft => {
-                                let txt = format!("{} has left this conversation.", usr.name);
-                                Message::text(None, &mut usr, &txt)
-                            }
+                            MessageData::MemberJoined(None) =>
+                                Message::system(local, &format!("{} has joined this conversation.", usr.name)),
+                            MessageData::MemberJoined(Some(m)) =>
+                                Message::system(local, &format!("{} has added {} to this conversation.", usr.name, m.name.as_str())),
+                            MessageData::MemberLeft(None) =>
+                                Message::system(local, &format!("{} has left this conversation.", usr.name)),
+                            MessageData::MemberLeft(Some(m)) =>
+                                Message::system(local, &format!("{} has removed {} from this conversation.", usr.name, m.name.as_str()))
                         };
-                        if m.status == MessageStatus::Created {
-                            msg.set_error()
-                        } else {
-                            msg.set_time(m.time.with_timezone(&this.timezone));
-                        }
-                        chan.push_front_msg(&m.id, msg)
+                        chan.push_front_msg(&m.id, message)
                     }
                     if new_content {
                         chan.push_front_date()

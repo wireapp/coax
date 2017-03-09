@@ -191,25 +191,25 @@ impl Channel {
     }
 
     pub fn push_front_msg(&mut self, id: &str, m: Message) {
-        if let Some(ref time) = m.datetime {
+        if let Some(time) = m.datetime() {
             if time.date() != self.date_lower && !self.model.is_empty() {
                 self.push_front_date()
             }
             self.date_lower = time.date()
         }
-        self.message_list.prepend(&m.row);
+        self.message_list.prepend(&m.row());
         self.model.insert(hash(id), m);
     }
 
     pub fn push_msg(&mut self, id: &str, m: Message) {
-        if let Some(ref time) = m.datetime {
+        if let Some(time) = m.datetime() {
             if time.date() != self.date_upper || self.model.is_empty() {
                 let dm = Message::date(time.date());
-                self.message_list.add(&dm.row)
+                self.message_list.add(&dm.row())
             }
             self.update_time(time)
         }
-        self.message_list.add(&m.row);
+        self.message_list.add(&m.row());
         self.model.insert(hash(id), m);
     }
 
@@ -218,13 +218,13 @@ impl Channel {
         if ix != -1 && d != self.date_upper {
             let dm = Message::date(d);
             self.date_upper = d;
-            self.message_list.insert(&dm.row, ix);
+            self.message_list.insert(&dm.row(), ix);
         }
     }
 
     pub fn push_front_date(&mut self) {
         let dm = Message::date(self.date_lower);
-        self.message_list.prepend(&dm.row)
+        self.message_list.prepend(&dm.row())
     }
 
     pub fn update_time(&mut self, dt: &DateTime<Local>) {
@@ -256,7 +256,52 @@ impl Channel {
 }
 
 #[derive(Debug, Clone)]
-pub struct Message {
+pub enum Message {
+    Text(TextMessage),
+    Date(DateHeader),
+    System(SystemMessage)
+}
+
+impl Message {
+    pub fn text(dt: Option<DateTime<Local>>, u: &mut res::User, txt: &str) -> Message {
+        Message::Text(TextMessage::new(dt, u, txt))
+    }
+
+    pub fn date(d: Date<Local>) -> Message {
+        Message::Date(DateHeader::new(d))
+    }
+
+    pub fn system(dt: DateTime<Local>, txt: &str) -> Message {
+        Message::System(SystemMessage::new(dt, txt))
+    }
+
+    pub fn row(&self) -> gtk::ListBoxRow {
+        match *self {
+            Message::Text(ref msg)   => msg.row.clone(),
+            Message::Date(ref msg)   => msg.row.clone(),
+            Message::System(ref msg) => msg.row.clone()
+        }
+    }
+
+    pub fn index(&self) -> i32 {
+        match *self {
+            Message::Text(ref msg)   => msg.row.get_index(),
+            Message::Date(ref msg)   => msg.row.get_index(),
+            Message::System(ref msg) => msg.row.get_index()
+        }
+    }
+
+    pub fn datetime(&self) -> Option<&DateTime<Local>> {
+        if let Message::Text(ref msg) = *self {
+            msg.datetime.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct TextMessage {
     datetime:  Option<DateTime<Local>>,
     row:       gtk::ListBoxRow,
     grid:      gtk::Grid,
@@ -265,8 +310,8 @@ pub struct Message {
     delivered: bool
 }
 
-impl Message {
-    pub fn text(dt: Option<DateTime<Local>>, u: &mut res::User, txt: &str) -> Message {
+impl TextMessage {
+    pub fn new(dt: Option<DateTime<Local>>, u: &mut res::User, txt: &str) -> TextMessage {
         let row = gtk::ListBoxRow::new();
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
@@ -306,7 +351,7 @@ impl Message {
         row.add(&grid);
         row.show_all();
 
-        Message {
+        TextMessage {
             datetime:  dt,
             row:       row,
             grid:      grid,
@@ -314,41 +359,6 @@ impl Message {
             time:      time,
             delivered: false
         }
-    }
-
-    pub fn date(d: Date<Local>) -> Message {
-        let row = gtk::ListBoxRow::new();
-        row.set_name("date-header");
-
-        let grid = gtk::Grid::new();
-        grid.set_margin_left(6);
-        grid.set_margin_top(6);
-        grid.set_margin_right(6);
-        grid.set_margin_bottom(6);
-
-        let time = gtk::Label::new(None);
-        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
-        time.set_hexpand(true);
-        time.set_halign(Align::Fill);
-        let dstr = d.format("%F").to_string();
-        time.set_markup(&format!("<big><b>{}</b></big>", dstr));
-        grid.attach(&time, 0, 0, 1, 1);
-
-        row.add(&grid);
-        row.show_all();
-
-        Message {
-            datetime:  Some(d.and_hms(0, 0, 0)),
-            row:       row,
-            grid:      grid,
-            icon:      gtk::Image::new(),
-            time:      time,
-            delivered: false
-        }
-    }
-
-    pub fn index(&self) -> i32 {
-        self.row.get_index()
     }
 
     pub fn set_delivered(&mut self, dt: DateTime<Local>) {
@@ -400,6 +410,71 @@ impl Message {
         if let Some(w) = self.grid.get_child_at(2, 0) {
             self.grid.remove(&w)
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DateHeader { row: gtk::ListBoxRow }
+
+impl DateHeader {
+    pub fn new(d: Date<Local>) -> DateHeader {
+        let row = gtk::ListBoxRow::new();
+        row.set_name("date-header");
+
+        let tstr = d.format("%F").to_string();
+        let time = gtk::Label::new(Some(tstr.as_ref()));
+        time.set_name("date-text");
+        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        time.set_margin_left(6);
+        time.set_margin_top(6);
+        time.set_margin_right(6);
+        time.set_margin_bottom(6);
+        time.set_hexpand(true);
+        time.set_halign(Align::Fill);
+
+        row.add(&time);
+        row.show_all();
+
+        DateHeader { row: row }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SystemMessage { row: gtk::ListBoxRow }
+
+impl SystemMessage {
+    pub fn new(dt: DateTime<Local>, txt: &str) -> SystemMessage {
+        let row = gtk::ListBoxRow::new();
+        row.set_name("system-header");
+
+        let hbox = gtk::Box::new(gtk::Orientation::Horizontal, 0);
+        hbox.set_margin_left(6);
+        hbox.set_margin_top(6);
+        hbox.set_margin_right(6);
+        hbox.set_margin_bottom(6);
+
+        let hdr = gtk::Label::new(Some("Note"));
+        hdr.set_name("system-category");
+        hdr.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        hdr.set_halign(Align::Start);
+        hbox.add(&hdr);
+
+        let lbl = gtk::Label::new(Some(txt));
+        lbl.set_hexpand(true);
+        lbl.set_halign(Align::Fill);
+        lbl.set_line_wrap(true);
+        hbox.add(&lbl);
+
+        let time = gtk::Label::new(None);
+        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        let tstr = dt.format("%T").to_string();
+        time.set_markup(&format!("<small>{}</small>", tstr));
+        hbox.add(&time);
+
+        row.add(&hbox);
+        row.show_all();
+
+        SystemMessage { row: row }
     }
 }
 

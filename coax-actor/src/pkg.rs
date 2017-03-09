@@ -8,7 +8,7 @@ pub enum Pkg {
     MessageUpdate(ConvId, String, DateTime<UTC>, MessageStatus),
     Conversation(Conversation<'static>),
     Contact(User<'static>, Connection),
-    MembersChange(ConvStatus, DateTime<UTC>, ConvId, Vec<User<'static>>),
+    MembersChange(ConvStatus, DateTime<UTC>, ConvId, Vec<User<'static>>, User<'static>),
     Disconnected,
     Connected,
     Fin

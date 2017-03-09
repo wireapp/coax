@@ -61,6 +61,7 @@ table! {
         mtype    -> SmallInt,
         status   -> SmallInt,
         text     -> Nullable<Text>,
+        user_id  -> Nullable<Binary>,
     }
 }
 

@@ -429,18 +429,19 @@ pub struct RawMessage {
     pub from_clt: Option<String>,
     pub mtype:    i16,
     pub status:   i16,
-    pub text:     Option<String>
+    pub text:     Option<String>,
+    pub user_id:  Option<Vec<u8>>
 }
 
 impl RawMessage {
-    pub fn to_message<'a>(self, u: User<'a>) -> Result<Message<'a>, Error> {
+    pub fn to_message<'a>(self, s: User<'a>, u: Option<User<'a>>) -> Result<Message<'a>, Error> {
         let data = match self.mtype {
             0 => {
                 let txt = self.text.ok_or(Error::InvalidData("missing text in message"))?;
                 MessageData::Text(txt)
             }
-            1 => MessageData::MemberJoined,
-            2 => MessageData::MemberLeft,
+            1 => MessageData::MemberJoined(u),
+            2 => MessageData::MemberLeft(u),
             _ => return Err(Error::InvalidData("unknown message type"))
         };
         let status =
@@ -453,7 +454,7 @@ impl RawMessage {
             id:     self.id,
             conv:   as_id(&self.conv, "conversation id")?,
             time:   from_timestamp(self.time),
-            user:   u,
+            user:   s,
             client: self.from_clt.map(ClientId::new),
             status: status,
             data:   data
@@ -461,11 +462,11 @@ impl RawMessage {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum MessageData {
+#[derive(Debug, Clone)]
+pub enum MessageData<'a> {
     Text(String),
-    MemberJoined,
-    MemberLeft
+    MemberJoined(Option<User<'a>>), // None == message sender
+    MemberLeft(Option<User<'a>>) // None == message sender
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -496,7 +497,7 @@ pub struct Message<'a> {
     pub user:   User<'a>,
     pub client: Option<ClientId<'a>>,
     pub status: MessageStatus,
-    pub data:   MessageData
+    pub data:   MessageData<'a>
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Insertable, Queryable)]
@@ -509,7 +510,8 @@ pub struct NewMessage<'a> {
     pub from_clt: Option<&'a str>,
     pub mtype:    i16,
     pub status:   i16,
-    pub text:     Option<&'a str>
+    pub text:     Option<&'a str>,
+    pub user_id:  Option<&'a [u8]>
 }
 
 impl<'a> NewMessage<'a> {
@@ -522,33 +524,36 @@ impl<'a> NewMessage<'a> {
             from_clt: Some(client.as_str()),
             mtype:    0,
             status:   MessageStatus::Created as i16,
-            text:     Some(txt)
+            text:     Some(txt),
+            user_id:  None
         }
     }
 
-    pub fn joined(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, user: &'a UserId) -> NewMessage<'a> {
+    pub fn joined(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, user: &'a UserId) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),
             time:     t.timestamp(),
-            from_usr: user.as_slice(),
+            from_usr: from.as_slice(),
             from_clt: None,
             mtype:    1,
             status:   MessageStatus::Received as i16,
-            text:     None
+            text:     None,
+            user_id:  if from != user { Some(user.as_slice()) } else { None }
         }
     }
 
-    pub fn left(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, user: &'a UserId) -> NewMessage<'a> {
+    pub fn left(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, user: &'a UserId) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),
             time:     t.timestamp(),
-            from_usr: user.as_slice(),
+            from_usr: from.as_slice(),
             from_clt: None,
             mtype:    2,
             status:   MessageStatus::Received as i16,
-            text:     None
+            text:     None,
+            user_id:  if from != user { Some(user.as_slice()) } else { None }
         }
     }
 

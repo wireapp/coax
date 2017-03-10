@@ -197,7 +197,7 @@ impl Channel {
             }
             self.date_lower = time.date()
         }
-        self.message_list.prepend(&m.row());
+        self.message_list.prepend(m.row());
         self.model.insert(hash(id), m);
     }
 
@@ -205,11 +205,11 @@ impl Channel {
         if let Some(time) = m.datetime() {
             if time.date() != self.date_upper || self.model.is_empty() {
                 let dm = Message::date(time.date());
-                self.message_list.add(&dm.row())
+                self.message_list.add(dm.row())
             }
             self.update_time(time)
         }
-        self.message_list.add(&m.row());
+        self.message_list.add(m.row());
         self.model.insert(hash(id), m);
     }
 
@@ -218,13 +218,13 @@ impl Channel {
         if ix != -1 && d != self.date_upper {
             let dm = Message::date(d);
             self.date_upper = d;
-            self.message_list.insert(&dm.row(), ix);
+            self.message_list.insert(dm.row(), ix);
         }
     }
 
     pub fn push_front_date(&mut self) {
         let dm = Message::date(self.date_lower);
-        self.message_list.prepend(&dm.row())
+        self.message_list.prepend(dm.row())
     }
 
     pub fn update_time(&mut self, dt: &DateTime<Local>) {
@@ -275,11 +275,11 @@ impl Message {
         Message::System(SystemMessage::new(dt, txt))
     }
 
-    pub fn row(&self) -> gtk::ListBoxRow {
+    pub fn row(&self) -> &gtk::ListBoxRow {
         match *self {
-            Message::Text(ref msg)   => msg.row.clone(),
-            Message::Date(ref msg)   => msg.row.clone(),
-            Message::System(ref msg) => msg.row.clone()
+            Message::Text(ref msg)   => &msg.row,
+            Message::Date(ref msg)   => &msg.row,
+            Message::System(ref msg) => &msg.row
         }
     }
 

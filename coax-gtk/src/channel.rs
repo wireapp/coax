@@ -62,6 +62,7 @@ impl Channel {
         grid.attach(&img, 0, 0, 1, 2);
 
         let name_label = gtk::Label::new(None);
+        name_label.set_name("channel-name");
         ffi::set_ellipsis(&name_label);
         name_label.set_max_width_chars(64);
         name_label.set_margin_left(6);
@@ -73,6 +74,7 @@ impl Channel {
         grid.attach(&name_label, 1, 0, 1, 1);
 
         let sub_label = gtk::Label::new(None);
+        sub_label.set_name("channel-subtitle");
         sub_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         ffi::set_ellipsis(&sub_label);
         sub_label.set_max_width_chars(64);
@@ -85,6 +87,7 @@ impl Channel {
         grid.attach(&sub_label, 1, 1, 1, 1);
 
         let time_label = gtk::Label::new(None);
+        time_label.set_name("channel-time");
         time_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         time_label.set_margin_left(6);
         time_label.set_margin_top(6);
@@ -92,6 +95,7 @@ impl Channel {
         grid.attach(&time_label, 2, 0, 1, 1);
 
         let date_label = gtk::Label::new(None);
+        date_label.set_name("channel-time");
         date_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         date_label.set_margin_left(6);
         date_label.set_margin_right(6);
@@ -145,7 +149,7 @@ impl Channel {
             date_upper:   dt.date()
         };
 
-        ch.set_name(n.as_ref().unwrap_or(&Name::new("N/A")).as_str());
+        ch.set_name(n.as_ref().unwrap_or(&Name::new("N/A")));
         ch.set_time(dt);
         ch
     }
@@ -240,18 +244,16 @@ impl Channel {
     fn set_time(&self, dt: &DateTime<Local>) {
         let tstr = dt.format("%T").to_string();
         let dstr = dt.format("%F").to_string();
-        self.time_label.set_markup(&format!("<small>{}</small>", tstr));
-        self.date_label.set_markup(&format!("<small>{}</small>", dstr))
+        self.time_label.set_text(&tstr);
+        self.date_label.set_text(&dstr)
     }
 
-    fn set_name(&self, name: &str) {
-        let nstr = ffi::escape(name).to_string_lossy();
-        self.name_label.set_markup(&format!("<big><b>{}</b></big>", nstr))
+    fn set_name(&self, n: &Name) {
+        self.name_label.set_text(n.as_str())
     }
 
-    fn set_sub(&self, name: &str) {
-        let nstr = ffi::escape(name).to_string_lossy();
-        self.sub_label.set_markup(&format!("<small>{}</small>", nstr))
+    fn set_sub(&self, txt: &str) {
+        self.sub_label.set_text(txt)
     }
 }
 
@@ -323,17 +325,18 @@ impl TextMessage {
         let img = u.icon_small();
         grid.attach(&img, 0, 0, 1, 1);
 
-        let nme = gtk::Label::new(None);
-        nme.set_markup(&format!("<small><b>{}</b></small>", u.name));
+        let nme = gtk::Label::new(Some(u.name.as_ref()));
+        nme.set_name("text-sender");
         nme.set_tooltip_text(u.handle.as_ref().map(|h| h.as_ref()));
         nme.set_halign(Align::Start);
         grid.attach(&nme, 1, 0, 1, 1);
 
         let time = gtk::Label::new(None);
+        time.set_name("text-time");
         time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         if let Some(t) = dt {
             let tstr = t.format("%T").to_string();
-            time.set_markup(&format!("<small>{}</small>", tstr))
+            time.set_text(&tstr)
         }
         grid.attach(&time, 2, 0, 1, 1);
 
@@ -380,7 +383,7 @@ impl TextMessage {
             self.grid.remove(&w)
         }
         let tstr = dt.format("%T").to_string();
-        self.time.set_markup(&format!("<small>{}</small>", tstr));
+        self.time.set_text(&tstr);
         self.datetime = Some(dt);
         self.grid.attach(&self.time, 2, 0, 1, 1)
     }
@@ -465,10 +468,10 @@ impl SystemMessage {
         lbl.set_line_wrap(true);
         hbox.add(&lbl);
 
-        let time = gtk::Label::new(None);
-        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         let tstr = dt.format("%T").to_string();
-        time.set_markup(&format!("<small>{}</small>", tstr));
+        let time = gtk::Label::new(Some(tstr.as_ref()));
+        time.set_name("system-time");
+        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         hbox.add(&time);
 
         row.add(&hbox);

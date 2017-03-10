@@ -1,3 +1,31 @@
+/* Channel */
+
+list row label#channel-name {
+    font-size: large;
+    font-weight: bold;
+}
+
+list row label#channel-subtitle {
+    font-size: x-small;
+}
+
+list row label#channel-time {
+    font-size: x-small;
+}
+
+/* Text Message */
+
+list row label#text-sender {
+    font-size: small;
+    font-weight: bold;
+}
+
+list row label#text-time {
+    font-size: x-small;
+}
+
+/* Date Header */
+
 list row#date-header {
     background-color: @theme_bg_color;
 }
@@ -7,6 +35,8 @@ list row label#date-text {
     font-weight: bold;
 }
 
+/* System Message */
+
 list row#system-header {
     color: @theme_selected_fg_color;
     background-color: @theme_selected_bg_color;
@@ -15,5 +45,9 @@ list row#system-header {
 list row label#system-category {
     font-size: large;
     font-weight: bold;
+}
+
+list row label#system-time {
+    font-size: x-small;
 }
 

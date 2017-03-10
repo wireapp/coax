@@ -38,8 +38,8 @@ list row label#date-text {
 /* System Message */
 
 list row#system-header {
-    color: @theme_selected_fg_color;
-    background-color: @theme_selected_bg_color;
+    color: #ffffff;
+    background-color: #6897a0;
 }
 
 list row label#system-category {

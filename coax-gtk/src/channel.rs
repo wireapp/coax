@@ -52,6 +52,7 @@ impl Channel {
 
     fn new(ct: ConvType, dt: &DateTime<Local>, id: &ConvId, n: &Option<Name>, img: gtk::Image) -> Channel {
         let channel_row = gtk::ListBoxRow::new();
+        channel_row.set_name("channel-row");
         let grid = gtk::Grid::new();
         grid.set_margin_left(6);
         grid.set_margin_top(6);
@@ -176,6 +177,18 @@ impl Channel {
 
     pub fn channel_row(&self) -> &gtk::ListBoxRow {
         &self.channel_row
+    }
+
+    pub fn is_selected(&self) -> bool {
+        self.channel_row.is_selected()
+    }
+
+    pub fn set_unread(&self) {
+        self.channel_row.get_style_context().map(|ctx| ctx.add_class("unread"));
+    }
+
+    pub fn set_read(&self) {
+        self.channel_row.get_style_context().map(|ctx| ctx.remove_class("unread"));
     }
 
     pub fn message_view(&self) -> &gtk::ScrolledWindow {

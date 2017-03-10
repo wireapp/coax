@@ -326,6 +326,7 @@ impl Coax {
                                     }));
                             this.futures.send(boxed(f)).unwrap()
                         }
+                        ch.set_read();
                         this.mainview.remove_row(0);
                         this.mainview.insert_row(0);
                         this.mainview.attach(ch.message_view(), 0, 0, 1, 1);
@@ -709,12 +710,15 @@ impl Coax {
                 self.show_notification(app, &usr, &m);
                 if ch.is_init() {
                     if let MessageData::Text(ref txt) = m.data {
-                        ch.push_msg(&m.id, Message::text(Some(mtime), &mut usr, txt))
+                        ch.push_msg(&m.id, Message::text(Some(mtime), &mut usr, txt));
                     }
                 } else {
                     ch.update_time(&mtime)
                 }
                 self.convlist.invalidate_sort();
+                if !ch.is_selected() {
+                    ch.set_unread()
+                }
                 if ch.conv_type() == ConvType::OneToOne && !self.is_sync.load(Ordering::Relaxed) {
                     let future = self.send_confirmation(&m.conv, &m.id)
                         .map_err(with!(logger => move |e| {
@@ -903,7 +907,10 @@ impl Coax {
                                 }
                         };
                         let mid = random_uuid().to_string();
-                        e.get_mut().push_msg(&mid, Message::system(local, &txt))
+                        e.get_mut().push_msg(&mid, Message::system(local, &txt));
+                        if !e.get().is_selected() {
+                            e.get().set_unread()
+                        }
                     }
                 }
             }

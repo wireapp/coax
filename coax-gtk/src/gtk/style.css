@@ -1,5 +1,9 @@
 /* Channel */
 
+list row#channel-row.unread {
+    background-color: alpha(@theme_selected_bg_color, 0.2);
+}
+
 list row label#channel-name {
     font-size: large;
     font-weight: bold;

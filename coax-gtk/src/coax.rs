@@ -370,7 +370,7 @@ impl Coax {
             let buf = from_some!(input.get_buffer());
             let (mut s, mut e) = buf.get_bounds();
             let txt = from_some!(buf.get_text(&s, &e, false));
-            let msg = MsgBuilder::new().text(txt).finish();
+            let msg = MsgBuilder::new().text(txt.trim_right()).finish();
             let log = this.log.clone();
             let fut = this.send_message(cid, msg).map_err(move |e| {
                 error!(log, "failed to send message"; "error" => format!("{:?}", e))

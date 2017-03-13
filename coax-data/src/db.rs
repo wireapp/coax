@@ -5,7 +5,7 @@ use std::marker::PhantomData;
 use chrono::{DateTime, UTC};
 use coax_api as api;
 use coax_api::types::{ConvId, UserId, ClientId, NotifId};
-use coax_api::user::ConnectStatus;
+use coax_api::user::{AssetKey, ConnectStatus};
 use diesel::{self, insert, delete, update};
 use diesel::connection::SimpleConnection;
 use diesel::expression::sql_literal::sql;
@@ -20,6 +20,7 @@ use model::{self, NewMember, NewVar, MessageStatus, ConvStatus};
 use model::{NewUser, NewClient, NewConnection, NewConversation, NewNotification};
 use model::{RawUser, RawClient, RawConnection, RawConversation, RawMessage};
 use model::{NewQueueItem, QueueItem, QueueItemType, RawQueueItem};
+use model::{RawAsset, AssetStatus};
 use schema;
 use slog::Logger;
 use util::as_id;
@@ -57,7 +58,6 @@ impl Database {
         Ok(())
     }
 
-    /// Does the given notification ID already exist?
     pub fn has_notification(&self, nid: &NotifId) -> Result<bool, Error> {
         use schema::inbox::dsl::*;
         debug!(self.logger, "has notification?"; "id" => nid.to_string());
@@ -68,8 +68,6 @@ impl Database {
         }
     }
 
-
-    /// Add some notification ID to the set of known IDs.
     pub fn insert_notification(&self, nid: &NotifId) -> Result<(), Error> {
         debug!(self.logger, "insert notification"; "id" => nid.to_string());
         let n = NewNotification { id: nid.as_slice() };
@@ -77,7 +75,6 @@ impl Database {
         Ok(())
     }
 
-    /// Get notification ID most recently set by `set_last_notification`.
     pub fn last_notification(&self) -> Result<Option<NotifId>, Error> {
         trace!(self.logger, "last notification");
         if let Some(blob) = self.var("last-notif")? {
@@ -87,14 +84,12 @@ impl Database {
         }
     }
 
-    /// Set last notification ID.
     pub fn set_last_notification(&self, i: &NotifId) -> Result<(), Error> {
         debug!(self.logger, "set last notification"; "id" => i.to_string());
         self.set_var("last-notif", i.as_bytes())?;
         Ok(())
     }
 
-    /// Select `User` by ID.
     pub fn user<'a>(&self, uid: &UserId) -> Result<Option<model::User<'a>>, Error> {
         use schema::users::dsl::*;
         debug!(self.logger, "select"; "user" => uid.to_string());
@@ -105,7 +100,6 @@ impl Database {
         }
     }
 
-    /// Insert new user or update existing record.
     pub fn insert_user(&self, u: &api::user::User) -> Result<(), Error> {
         use schema::users::dsl::*;
         debug!(self.logger, "insert"; "user" => u.id.to_string());
@@ -124,7 +118,6 @@ impl Database {
         }).map_err(From::from)
     }
 
-    /// Select `Client` by ID.
     pub fn client<'a>(&self, uid: &UserId, cid: &ClientId) -> Result<Option<model::Client<'a>>, Error> {
         use schema::clients::dsl::*;
         debug!(self.logger, "select"; "user" => uid.to_string(), "client" => cid.as_str());
@@ -138,7 +131,6 @@ impl Database {
         }
     }
 
-    /// Select all `Client`s belonging to some user.
     pub fn clients<'a>(&self, uid: &UserId) -> Result<Vec<model::Client<'a>>, Error> {
         use schema::clients::dsl::*;
         debug!(self.logger, "select clients"; "user" => uid.to_string());
@@ -157,7 +149,6 @@ impl Database {
         }
     }
 
-    /// Insert a new client.
     pub fn insert_client(&self, u: &UserId, c: &api::client::Client) -> Result<(), Error> {
         use schema::clients::dsl::*;
         debug!(self.logger, "insert"; "user" => u.to_string(), "client" => c.id.as_str());
@@ -175,7 +166,6 @@ impl Database {
         }).map_err(From::from)
     }
 
-    /// Insert new clients.
     pub fn insert_clients(&self, u: &UserId, cs: &[api::client::Client]) -> Result<(), Error> {
         debug!(self.logger, "insert clients"; "user" => u.to_string());
         // TODO: upsert
@@ -190,7 +180,6 @@ impl Database {
         Ok(())
     }
 
-    /// Select `Connection` to user.
     pub fn connection<'a>(&self, uid: &UserId) -> Result<Option<(model::Connection, model::User<'a>)>, Error> {
         use schema::connections::dsl::*;
         debug!(self.logger, "select connection"; "to" => uid.to_string());
@@ -208,7 +197,6 @@ impl Database {
         }
     }
 
-    /// Select all `Connections`.
     pub fn connections<'a>(&self) -> Result<Vec<(model::User<'a>, model::Connection)>, Error> {
         use schema::users::dsl::*;
         use schema::connections;
@@ -231,7 +219,6 @@ impl Database {
         }
     }
 
-    /// Insert new user connection.
     pub fn insert_connection(&self, c: &api::user::Connection) -> Result<(), Error> {
         debug!(self.logger, "insert"; "connection" => c.to.to_string());
         let nc = NewConnection::from_api(c);
@@ -239,7 +226,6 @@ impl Database {
         Ok(())
     }
 
-    /// Update connection status.
     pub fn update_connection(&self, uid: &UserId, s: ConnectStatus) -> Result<bool, Error> {
         use schema::connections::dsl::*;
         debug!(self.logger, "updating connection"; "to" => uid.to_string(), "status" => s.as_str());
@@ -251,7 +237,6 @@ impl Database {
             .map_err(From::from)
     }
 
-    /// Select a `Conversation` by ID.
     pub fn conversation<'a>(&self, cid: &ConvId) -> Result<Option<model::Conversation<'a>>, Error> {
         use schema::conversations::dsl::*;
         debug!(self.logger, "select"; "conv" => cid.to_string());
@@ -267,7 +252,6 @@ impl Database {
         }
     }
 
-    /// Select all `Conversation`s.
     pub fn conversations<'a>(&self, from: Option<PagingState<C>>, lim: usize) -> Result<Page<Vec<model::Conversation<'a>>, C>, Error> {
         use schema::conversations::dsl::*;
         debug!(self.logger, "select conversations");
@@ -294,7 +278,6 @@ impl Database {
         }
     }
 
-    /// Update conversation time.
     pub fn update_conv_time(&self, cid: &ConvId, t: i64) -> Result<bool, Error> {
         use schema::conversations::dsl::*;
         debug!(self.logger, "updating conversation time"; "value" => t);
@@ -305,7 +288,6 @@ impl Database {
             .map_err(From::from)
     }
 
-    /// Update conversation status.
     pub fn update_conv_status(&self, cid: &ConvId, s: ConvStatus) -> Result<bool, Error> {
         use schema::conversations::dsl::*;
         debug!(self.logger, "updating conversation status"; "value" => format!("{:?}", s));
@@ -316,7 +298,6 @@ impl Database {
             .map_err(From::from)
     }
 
-    /// Insert a new conversation.
     pub fn insert_conversation(&self, t: &DateTime<UTC>, c: &api::conv::Conversation) -> Result<(), Error> {
         use schema::conversations::dsl::*;
         debug!(self.logger, "insert"; "conv" => c.id.to_string());
@@ -341,7 +322,6 @@ impl Database {
         Ok(())
     }
 
-    /// Select all `UserId`s which are members of some conversation.
     pub fn member_ids(&self, cid: &ConvId) -> Result<Vec<UserId>, Error> {
         use schema::members::dsl::*;
         debug!(self.logger, "select member ids"; "conv" => cid.to_string());
@@ -361,7 +341,6 @@ impl Database {
         }
     }
 
-    /// Insert `UserId`s as members into a conversation.
     pub fn insert_members(&self, cid: &ConvId, users: &[&UserId]) -> Result<(), Error> {
         debug!(self.logger, "insert members"; "conv" => cid.to_string());
         let mm: Vec<NewMember> = users.iter()
@@ -371,7 +350,6 @@ impl Database {
         Ok(())
     }
 
-    /// Remove `UserId`s as members from a conversation.
     pub fn remove_members(&self, cid: &ConvId, users: &[&UserId]) -> Result<(), Error> {
         use schema::members::dsl::*;
         debug!(self.logger, "remove members"; "conv" => cid.to_string());
@@ -381,7 +359,6 @@ impl Database {
         Ok(())
     }
 
-    /// Select all `User`s which are members of some conversation.
     pub fn members<'a>(&self, cid: &ConvId) -> Result<Vec<model::User<'a>>, Error> {
         use schema::members::dsl::*;
         debug!(self.logger, "select members"; "conv" => cid.to_string());
@@ -404,8 +381,6 @@ impl Database {
         }
     }
 
-    /// Select up to `lim` `Message`s from some conversation.
-    /// Optionally starting from some id.
     pub fn messages<'a>(&self, cid: &ConvId, from: Option<PagingState<M>>, lim: usize) -> Result<Page<Vec<model::Message<'a>>, M>, Error> {
         use schema::users;
         use schema::messages::dsl::*;
@@ -426,9 +401,15 @@ impl Database {
             Ok(mm) => {
                 let mut vec = Vec::with_capacity(mm.len());
                 for (m, s) in mm {
+                    let a =
+                        if let Some(ref ai) = m.asset {
+                            self.asset(&AssetKey::new(ai.as_ref()))?
+                        } else {
+                            None
+                        };
                     match m.user_id.as_ref().map(|xs| UserId::from_bytes(xs)) {
-                        None            => vec.push(m.to_message(s.to_user()?, None)?),
-                        Some(Some(uid)) => vec.push(m.to_message(s.to_user()?, self.user(&uid)?)?),
+                        None            => vec.push(m.to_message(s.to_user()?, None, a)?),
+                        Some(Some(uid)) => vec.push(m.to_message(s.to_user()?, self.user(&uid)?, a)?),
                         Some(None)      => {
                             error!(self.logger, "invalid messages.user_id"; "conv" => cid.to_string());
                             return Err(Error::InvalidData("messages.user_id"))
@@ -441,7 +422,6 @@ impl Database {
         }
     }
 
-    /// Insert a new conversation message.
     pub fn insert_message(&self, nm: &model::NewMessage) -> Result<(), Error> {
         debug!(self.logger, "insert message";
                "conv"   => ConvId::from_bytes(nm.conv).as_ref().map(ConvId::to_string).unwrap_or("???".into()),
@@ -451,7 +431,6 @@ impl Database {
         Ok(())
     }
 
-    /// Update message status.
     pub fn update_message_status(&self, cid: &ConvId, mid: &str, s: MessageStatus) -> Result<bool, Error> {
         use schema::messages::dsl::*;
         debug!(self.logger, "updating message status"; "id" => mid, "status" => format!("{:?}", s));
@@ -462,7 +441,6 @@ impl Database {
             .map_err(From::from)
     }
 
-    /// Update message time.
     pub fn update_message_time(&self, cid: &ConvId, mid: &str, t: &DateTime<UTC>) -> Result<bool, Error> {
         use schema::messages::dsl::*;
         debug!(self.logger, "updating message time"; "id" => mid, "time" => t.timestamp());
@@ -473,7 +451,6 @@ impl Database {
             .map_err(From::from)
     }
 
-    /// Select conversation ID corresponding to message ID.
     pub fn message_conversation_id(&self, mid: &str) -> Result<Option<ConvId>, Error> {
         use schema::messages::dsl::*;
         debug!(self.logger, "select conversation of message"; "id" => mid);
@@ -483,6 +460,32 @@ impl Database {
             Err(e)  => Err(Error::Result(e)),
             Ok(cid) => as_id(&cid, "conversation id").map(Some)
         }
+    }
+
+    pub fn asset<'a>(&self, aid: &AssetKey) -> Result<Option<model::Asset<'a>>, Error> {
+        use schema::assets::dsl::*;
+        debug!(self.logger, "select asset"; "id" => aid.as_str());
+        match assets.find(aid.as_str()).first::<RawAsset>(&self.conn) {
+            Err(result::Error::NotFound) => Ok(None),
+            Err(e)                       => Err(Error::Result(e)),
+            Ok(a)                        => a.to_asset().map(Some)
+        }
+    }
+
+    pub fn insert_asset(&self, na: &model::NewAsset) -> Result<(), Error> {
+        debug!(self.logger, "insert asset"; "id" => na.id, "status" => na.status);
+        insert_or_replace(na).into(schema::assets::table).execute(&self.conn)?;
+        Ok(())
+    }
+
+    pub fn update_asset_status(&self, k: &AssetKey, s: AssetStatus) -> Result<bool, Error> {
+        use schema::assets::dsl::*;
+        debug!(self.logger, "updating asset status"; "id" => k.as_str(), "status" => format!("{:?}", s));
+        update(assets.find(k.as_str()))
+            .set(status.eq(s as i16))
+            .execute(&self.conn)
+            .map(|n| n > 0)
+            .map_err(From::from)
     }
 
     /// Select value by lookup key.

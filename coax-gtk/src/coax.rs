@@ -10,7 +10,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use channel::{Channel, Message, TextMessage};
+use channel::{Channel, Message, TextMessage, Image};
 use chrono::{DateTime, Local, UTC};
 use coax_actor::{Actor, Error, Pkg, Delivery};
 use coax_actor::actor::{Init, Connected, Offline, Online};
@@ -22,13 +22,15 @@ use coax_api::user::{self, ConnectStatus};
 use coax_api_proto::{Builder as MsgBuilder, GenericMessage};
 use coax_client::error::{Error as ClientError};
 use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus, ConvStatus};
+use coax_data::{AssetStatus, AssetType};
 use coax_data::profiles::ProfileDb;
 use coax_net::http::tls;
 use contact::Contacts;
 use ffi;
 use futures::{self, Future};
-use futures_spawn::SpawnHelper;
-use futures_threadpool::{self as pool, ThreadPool};
+use futures_cpupool::{self as pool, CpuPool};
+use gdk::prelude::ContextExt;
+use gdk_pixbuf::{InterpType, Pixbuf};
 use gio::{self, MenuModel, SimpleAction};
 use glib_sys;
 use gtk::prelude::*;
@@ -52,8 +54,8 @@ enum Io {
 #[derive(Clone)]
 pub struct Coax {
     log:      Logger,
-    pool_rem: ThreadPool, // sending & receiving threads (remote)
-    pool_loc: ThreadPool, // threads acting on local state
+    pool_rem: CpuPool, // sending & receiving threads (remote)
+    pool_loc: CpuPool, // threads acting on local state
     futures:  Sender<Box<Future<Item=(), Error=()>>>,
     profiles: Arc<Mutex<ProfileDb>>,
     builder:  gtk::Builder,
@@ -319,7 +321,7 @@ impl Coax {
                     if let Some(ch) = this.channels.borrow().get(id) {
                         if !ch.is_init() {
                             let f =
-                                this.load_messages(id)
+                                this.load_messages(&app, id)
                                     .map_err(with!(this, app => move |e| {
                                         error!(this.log, "failed to load messages"; "error" => format!("{:?}", e));
                                         show_error(&app, &e, "Failed to load messages", &format!("{}", e))
@@ -380,9 +382,67 @@ impl Coax {
         }));
         self.send_btn.connect_clicked(with!(send => move |_| send.activate(None)));
 
+        let main_pane: gtk::Paned = self.builder.get_object("main-pane").unwrap();
+        let max_left = SimpleAction::new("max_left", None);
+        max_left.connect_activate(with!(main_pane => move |_, _| {
+            if let (Some(c1), Some(c2)) = (main_pane.get_child1(), main_pane.get_child2()) {
+                match (c1.is_visible(), c2.is_visible()) {
+                    (true, true)  => c2.set_visible(false),
+                    (false, _)    => c1.set_visible(true),
+                    _             => {}
+                }
+            }
+        }));
+        let max_right = SimpleAction::new("max_right", None);
+        max_right.connect_activate(move |_, _| {
+            if let (Some(c1), Some(c2)) = (main_pane.get_child1(), main_pane.get_child2()) {
+                match (c1.is_visible(), c2.is_visible()) {
+                    (true, true) => c1.set_visible(false),
+                    (_, false)   => c2.set_visible(true),
+                    _            => {}
+                }
+            }
+        });
+        let right_pane: gtk::Paned = self.builder.get_object("right-pane").unwrap();
+        let max_top = SimpleAction::new("max_top", None);
+        max_top.connect_activate(with!(right_pane => move |_, _| {
+            if !right_pane.is_visible() {
+                return ()
+            }
+            if let (Some(c1), Some(c2)) = (right_pane.get_child1(), right_pane.get_child2()) {
+                match (c1.is_visible(), c2.is_visible()) {
+                    (true, true)  => c2.set_visible(false),
+                    (false, _)    => c1.set_visible(true),
+                    _             => {}
+                }
+            }
+        }));
+        let max_bottom = SimpleAction::new("max_bottom", None);
+        max_bottom.connect_activate(move |_, _| {
+            if !right_pane.is_visible() {
+                return ()
+            }
+            if let (Some(c1), Some(c2)) = (right_pane.get_child1(), right_pane.get_child2()) {
+                match (c1.is_visible(), c2.is_visible()) {
+                    (true, true) => c1.set_visible(false),
+                    (_, false)   => c2.set_visible(true),
+                    _            => {}
+                }
+            }
+        });
+
         window.add_action(&open);
         window.add_action(&send);
+        window.add_action(&max_left);
+        window.add_action(&max_right);
+        window.add_action(&max_top);
+        window.add_action(&max_bottom);
         app.set_accels_for_action("win.send", &["<Shift>Return"]);
+        app.set_accels_for_action("win.open", &["<Ctrl>o"]);
+        app.set_accels_for_action("win.max_left", &["<Alt>Right"]);
+        app.set_accels_for_action("win.max_right", &["<Alt>Left"]);
+        app.set_accels_for_action("win.max_top", &["<Alt>Down"]);
+        app.set_accels_for_action("win.max_bottom", &["<Alt>Up"]);
 
         window.add(&main);
         window.set_titlebar(Some(&bar));
@@ -691,7 +751,7 @@ impl Coax {
             Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(m, c, t, s),
             Pkg::Conversation(c)              => self.on_conversation(c),
             Pkg::Contact(u, c)                => self.on_contact(app, u, c),
-            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(d, c, m, s, u),
+            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(d, c, m, s, u)
         }
     }
 
@@ -707,8 +767,23 @@ impl Coax {
                 let mut usr = res.user_mut(&m.user.id).unwrap();
                 self.show_notification(app, &usr, &m);
                 if ch.is_init() {
-                    if let MessageData::Text(ref txt) = m.data {
-                        ch.push_msg(&m.id, Message::text(Some(mtime), &mut usr, txt));
+                    match m.data {
+                        MessageData::Text(txt) =>
+                            ch.push_msg(&m.id, Message::text(Some(mtime), &mut usr, &txt)),
+                        MessageData::Asset(ast) => {
+                            if ast.atype == AssetType::Image {
+                                let img = gtk::DrawingArea::new();
+                                let msg = Image::new(mtime, &mut usr, img.clone(), app.get_active_window());
+                                msg.start_spinner();
+                                ch.push_msg(&m.id, Message::Image(msg));
+                                let future = self.set_image(ast, m.conv.clone(), m.id.clone(), img)
+                                    .map_err(with!(logger => move |e| {
+                                        error!(logger, "failed to set image"; "error" => format!("{:?}", e))
+                                    }));
+                                self.futures.send(boxed(future)).unwrap()
+                            }
+                        }
+                        _ => {}
                     }
                 } else {
                     ch.update_time(&mtime)
@@ -865,21 +940,22 @@ impl Coax {
         }));
     }
 
-    fn on_members_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User>, s: ConvStatus, from: User) {
-        debug!(self.log, "on_member_change"; "conv" => cid.to_string());
+    fn on_members_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
+        debug!(self.log, "on_members_change"; "conv" => cid.to_string());
         match self.channels.borrow_mut().entry(cid.clone()) {
             Entry::Vacant(_) => {
                 let this   = self.clone();
                 let future = self.conversation(&cid)
                     .map(with!(this => move |conv| {
                         if let Some(c) = conv {
-                            this.on_conversation(c)
+                            this.on_conversation(c);
+                            this.on_members_change(dt, cid, members, s, from)
                         } else {
                             error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
                         }
                     }))
                     .map_err(with!(this => move |e| {
-                        error!(this.log, "on_member_change error"; "error" => format!("{}", e))
+                        error!(this.log, "on_members_change error"; "error" => format!("{}", e))
                     }));
                 self.futures.send(boxed(future)).unwrap()
             }
@@ -1005,6 +1081,49 @@ impl Coax {
     //
     // Futures
     //
+
+    fn set_image(&self, ast: coax_data::Asset<'static>, c: ConvId, m: String, img: gtk::DrawingArea) -> impl Future<Item=(), Error=Error> {
+        let this  = self.clone();
+        let actor = self.actor.clone();
+        self.pool_loc.spawn_fn(move || {
+                let mut act = actor.lock().unwrap();
+                match *act {
+                    Some(Io::Online(ref mut a)) => {
+                        a.download_asset(&ast.id, ast.token.as_ref())?;
+                        if ast.status != AssetStatus::Local {
+                            a.decrypt_asset(&ast.id, &ast.cksum, &ast.key)?;
+                        }
+                        Ok(a.asset_path(&ast.id))
+                    }
+                    _ => Err(Error::Message("invalid app state"))
+                }
+            })
+            .map(with!(this => move |path| {
+                if let Some(ch) = this.channels.borrow().get(&c) {
+                    ch.get_msg(&m).map(|msg| if let Message::Image(ref m) = *msg { m.stop_spinner() });
+                }
+                let buf    = Pixbuf::new_from_file(path.to_string_lossy().as_ref()).unwrap(); // TODO
+                let width  = buf.get_width();
+                let height = buf.get_height();
+                let w      = img.get_allocated_width();
+                let h      = w * height / width;
+                img.set_size_request(-1, h);
+                img.connect_draw(move |img, ctx| {
+                    let w = img.get_allocated_width();
+                    let h = w * height / width;
+                    if w < width {
+                        img.set_size_request(-1, h);
+                        let b = buf.scale_simple(w, h, InterpType::Bilinear).unwrap(); // TODO
+                        ctx.set_source_pixbuf(&b, 0.0, 0.0);
+                    } else {
+                        img.set_size_request(-1, height);
+                        ctx.set_source_pixbuf(&buf, 0.0, 0.0)
+                    }
+                    ctx.paint();
+                    gtk::Inhibit(false)
+                });
+            }))
+    }
 
     fn set_user_icon(&self, u: UserId) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "set user icon"; "id" => u.to_string());
@@ -1142,7 +1261,7 @@ impl Coax {
             }))
     }
 
-    fn load_messages(&self, cid: &ConvId) -> impl Future<Item=(), Error=Error> {
+    fn load_messages(&self, app: &gtk::Application, cid: &ConvId) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "load conversation messages"; "id" => cid.to_string());
         let this    = self.clone();
         let actor   = self.actor.clone();
@@ -1155,7 +1274,7 @@ impl Coax {
                     _                            => Err(Error::Message("invalid app state"))
                 }
             })
-            .map(with!(this, cid => move |mm| {
+            .map(with!(this, cid, app => move |mm| {
                 if let Some(mut chan) = this.channels.borrow_mut().get_mut(&cid) {
                     let mut new_content = false;
                     for m in mm.data {
@@ -1176,6 +1295,17 @@ impl Coax {
                                     msg.set_time(local)
                                 }
                                 Message::Text(msg)
+                            }
+                            MessageData::Asset(ast) => {
+                                let img = gtk::DrawingArea::new();
+                                let msg = Image::new(local, &mut usr, img.clone(), app.get_active_window());
+                                msg.start_spinner();
+                                let future = this.set_image(ast, cid.clone(), m.id.clone(), img)
+                                    .map_err(with!(this => move |e| {
+                                        error!(this.log, "failed to set image"; "error" => format!("{:?}", e))
+                                    }));
+                                this.futures.send(boxed(future)).unwrap();
+                                Message::Image(msg)
                             }
                             MessageData::MemberJoined(None) =>
                                 Message::system(local, &format!("{} has joined this conversation.", usr.name)),

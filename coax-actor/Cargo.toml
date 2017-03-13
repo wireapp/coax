@@ -29,6 +29,7 @@ serde           = ">= 0.9"
 serde_derive    = ">= 0.9"
 slog            = ">= 1.0"
 slog-term       = ">= 0.5"
+tempdir         = ">= 0.3"
 toml            = ">= 0.3"
 url             = ">= 1.1"
 

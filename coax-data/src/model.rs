@@ -3,10 +3,11 @@ use coax_api::client::{self, Model, Client as ApiClient};
 use coax_api::conv::{ConvType, Conversation as ApiConv};
 use coax_api::types::{ClientId, ConvId, UserId, Name, Handle, Email, Phone, Label};
 use coax_api::user::{ConnectStatus, User as ApiUser, Connection as ApiConn};
-use coax_api::user::{AssetSize, AssetKey};
+use coax_api::user::{AssetSize, AssetKey, AssetToken};
 use error::Error;
 use util::{from_timestamp, as_id};
 
+use schema::assets;
 use schema::clients;
 use schema::users;
 use schema::conversations;
@@ -420,6 +421,7 @@ impl<'a> NewConnection<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
 #[belongs_to(RawConversation, foreign_key = "conv")]
 #[belongs_to(RawUser, foreign_key = "from_usr")]
+#[belongs_to(RawAsset, foreign_key = "asset")]
 #[table_name = "messages"]
 pub struct RawMessage {
     pub id:       String,
@@ -430,11 +432,12 @@ pub struct RawMessage {
     pub mtype:    i16,
     pub status:   i16,
     pub text:     Option<String>,
-    pub user_id:  Option<Vec<u8>>
+    pub user_id:  Option<Vec<u8>>,
+    pub asset:    Option<String>
 }
 
 impl RawMessage {
-    pub fn to_message<'a>(self, s: User<'a>, u: Option<User<'a>>) -> Result<Message<'a>, Error> {
+    pub fn to_message<'a>(self, s: User<'a>, u: Option<User<'a>>, a: Option<Asset<'a>>) -> Result<Message<'a>, Error> {
         let data = match self.mtype {
             0 => {
                 let txt = self.text.ok_or(Error::InvalidData("missing text in message"))?;
@@ -442,6 +445,13 @@ impl RawMessage {
             }
             1 => MessageData::MemberJoined(u),
             2 => MessageData::MemberLeft(u),
+            3 => {
+                if let Some(asset) = a {
+                    MessageData::Asset(asset)
+                } else {
+                    return Err(Error::InvalidData("missing asset in message"))
+                }
+            }
             _ => return Err(Error::InvalidData("unknown message type"))
         };
         let status =
@@ -465,6 +475,7 @@ impl RawMessage {
 #[derive(Debug, Clone)]
 pub enum MessageData<'a> {
     Text(String),
+    Asset(Asset<'a>),
     MemberJoined(Option<User<'a>>), // None == message sender
     MemberLeft(Option<User<'a>>) // None == message sender
 }
@@ -511,21 +522,23 @@ pub struct NewMessage<'a> {
     pub mtype:    i16,
     pub status:   i16,
     pub text:     Option<&'a str>,
-    pub user_id:  Option<&'a [u8]>
+    pub user_id:  Option<&'a [u8]>,
+    pub asset:    Option<&'a str>
 }
 
 impl<'a> NewMessage<'a> {
-    pub fn text(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, user: &'a UserId, client: &'a ClientId, txt: &'a str) -> NewMessage<'a> {
+    pub fn text(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, client: &'a ClientId, txt: &'a str) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),
             time:     t.timestamp(),
-            from_usr: user.as_slice(),
+            from_usr: from.as_slice(),
             from_clt: Some(client.as_str()),
             mtype:    0,
             status:   MessageStatus::Created as i16,
             text:     Some(txt),
-            user_id:  None
+            user_id:  None,
+            asset:    None
         }
     }
 
@@ -539,7 +552,8 @@ impl<'a> NewMessage<'a> {
             mtype:    1,
             status:   MessageStatus::Received as i16,
             text:     None,
-            user_id:  if from != user { Some(user.as_slice()) } else { None }
+            user_id:  if from != user { Some(user.as_slice()) } else { None },
+            asset:    None
         }
     }
 
@@ -553,7 +567,23 @@ impl<'a> NewMessage<'a> {
             mtype:    2,
             status:   MessageStatus::Received as i16,
             text:     None,
-            user_id:  if from != user { Some(user.as_slice()) } else { None }
+            user_id:  if from != user { Some(user.as_slice()) } else { None },
+            asset:    None
+        }
+    }
+
+    pub fn asset(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, client: &'a ClientId, asset: &'a AssetKey) -> NewMessage<'a> {
+        NewMessage {
+            id:       mid,
+            conv:     cid.as_slice(),
+            time:     t.timestamp(),
+            from_usr: from.as_slice(),
+            from_clt: Some(client.as_str()),
+            mtype:    3,
+            status:   MessageStatus::Created as i16,
+            text:     None,
+            user_id:  None,
+            asset:    Some(asset.as_str())
         }
     }
 
@@ -561,6 +591,119 @@ impl<'a> NewMessage<'a> {
         self.status = s as i16
     }
 }
+
+
+// Assets ///////////////////////////////////////////////////////////////////
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetType {
+    Image = 0,
+    Audio = 1,
+    Video = 2
+}
+
+impl AssetType {
+    pub fn from_i16(i: i16) -> Option<AssetType> {
+        match i {
+            0 => Some(AssetType::Image),
+            1 => Some(AssetType::Audio),
+            2 => Some(AssetType::Video),
+            _ => None
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetStatus {
+    Remote = 0,
+    Local  = 1
+}
+
+impl AssetStatus {
+    pub fn from_i16(i: i16) -> Option<AssetStatus> {
+        match i {
+            0 => Some(AssetStatus::Remote),
+            1 => Some(AssetStatus::Local),
+            _ => None
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
+#[table_name = "assets"]
+pub struct RawAsset {
+    pub id:     String,
+    pub atype:  i16,
+    pub status: i16,
+    pub token:  Option<String>,
+    pub key:    Vec<u8>,
+    pub cksum:  Vec<u8>
+}
+
+impl RawAsset {
+    pub fn to_asset<'a>(self) -> Result<Asset<'a>, Error> {
+        let ty =
+            if let Some(ty) = AssetType::from_i16(self.atype) {
+                ty
+            } else {
+                return Err(Error::InvalidData("unknown asset type"))
+            };
+        let st =
+            if let Some(st) = AssetStatus::from_i16(self.status) {
+                st
+            } else {
+                return Err(Error::InvalidData("unknown asset status"))
+            };
+        Ok(Asset {
+            id:     AssetKey::new(self.id),
+            atype:  ty,
+            status: st,
+            token:  self.token.map(AssetToken::new),
+            key:    self.key,
+            cksum:  self.cksum
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Asset<'a> {
+    pub id:     AssetKey<'a>,
+    pub atype:  AssetType,
+    pub status: AssetStatus,
+    pub token:  Option<AssetToken<'a>>,
+    pub key:    Vec<u8>,
+    pub cksum:  Vec<u8>
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Insertable, Queryable)]
+#[table_name = "assets"]
+pub struct NewAsset<'a> {
+    pub id:       &'a str,
+    pub atype:    i16,
+    pub status:   i16,
+    pub token:    Option<&'a str>,
+    pub key:      &'a [u8],
+    pub cksum:    &'a [u8]
+}
+
+impl<'a> NewAsset<'a> {
+    pub fn new(id: &'a AssetKey, ty: AssetType, st: AssetStatus, ky: &'a[u8], ck: &'a [u8]) -> NewAsset<'a> {
+        NewAsset {
+            id:     id.as_str(),
+            atype:  ty as i16,
+            status: st as i16,
+            token:  None,
+            key:    ky,
+            cksum:  ck
+        }
+    }
+
+    pub fn set_token(&mut self, t: &'a AssetToken) {
+        self.token = Some(t.as_str())
+    }
+}
+
+// Inbox ////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, PartialEq, Eq, Associations, Identifiable, Insertable, Queryable)]
 #[table_name = "inbox"]
@@ -573,6 +716,8 @@ pub struct Notification {
 pub struct NewNotification<'a> {
     pub id: &'a [u8]
 }
+
+// Outbox ///////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QueueItemType { Message }

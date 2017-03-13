@@ -14,6 +14,7 @@ use coax_client::error as client;
 use coax_data;
 use coax_net::rpc;
 use json::{DecodeError, EncodeError};
+use openssl;
 use protobuf::ProtobufError;
 use url;
 
@@ -113,6 +114,11 @@ quick_error! {
         }
         MsgSend(e: client::Error<message::send::Error>) {
             display("error sending message: {}", e)
+            cause(e)
+            from()
+        }
+        OpenSsl(e: openssl::error::ErrorStack) {
+            display("openssl error: {}", e)
             cause(e)
             from()
         }

@@ -24,3 +24,4 @@ pub use error::Error;
 pub use model::{User, Client, Conversation, Connection, ConvStatus};
 pub use model::{Message, MessageData, MessageStatus, NewMessage};
 pub use model::{QueueItem, QueueItemData, QueueItemType, NewQueueItem};
+pub use model::{Asset, NewAsset, AssetType, AssetStatus};

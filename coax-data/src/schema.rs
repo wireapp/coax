@@ -53,15 +53,27 @@ table! {
 
 table! {
     messages (conv, id) {
-        id       -> Text,
-        conv     -> Binary,
-        time     -> BigInt,
-        from_usr -> Binary,
-        from_clt -> Nullable<Text>,
-        mtype    -> SmallInt,
-        status   -> SmallInt,
-        text     -> Nullable<Text>,
-        user_id  -> Nullable<Binary>,
+        id        -> Text,
+        conv      -> Binary,
+        time      -> BigInt,
+        from_usr  -> Binary,
+        from_clt  -> Nullable<Text>,
+        mtype     -> SmallInt,
+        status    -> SmallInt,
+        text      -> Nullable<Text>,
+        user_id   -> Nullable<Binary>,
+        asset     -> Nullable<Text>,
+    }
+}
+
+table! {
+    assets {
+        id     -> Text,
+        atype  -> SmallInt,
+        status -> SmallInt,
+        token  -> Nullable<Text>,
+        key    -> Binary,
+        cksum  -> Binary,
     }
 }
 
@@ -180,6 +192,15 @@ pub const SCHEMA: &'static str = r"
     );
 
     CREATE INDEX IF NOT EXISTS message_id_index ON messages (id);
+
+    CREATE TABLE IF NOT EXISTS assets (
+        id     TEXT PRIMARY KEY,
+        atype  INTEGER NOT NULL,
+        status INTEGER NOT NULL,
+        token  TEXT,
+        key    BLOB NOT NULL,
+        cksum  BLOB NOT NULL
+    ) WITHOUT ROWID;
 
     CREATE TABLE IF NOT EXISTS variables (
         name  TEXT PRIMARY KEY,

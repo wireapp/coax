@@ -8,6 +8,7 @@ use coax_api::types::{Name, ConvId};
 use ffi;
 use fnv::FnvHashMap;
 use gdk_pixbuf::{InterpType, Pixbuf};
+use gio;
 use gtk::{self, Align};
 use gtk::prelude::*;
 use res;
@@ -273,6 +274,7 @@ impl Channel {
 #[derive(Debug, Clone)]
 pub enum Message {
     Text(TextMessage),
+    Image(Image),
     Date(DateHeader),
     System(SystemMessage)
 }
@@ -293,6 +295,7 @@ impl Message {
     pub fn row(&self) -> &gtk::ListBoxRow {
         match *self {
             Message::Text(ref msg)   => &msg.row,
+            Message::Image(ref msg)  => &msg.row,
             Message::Date(ref msg)   => &msg.row,
             Message::System(ref msg) => &msg.row
         }
@@ -301,16 +304,18 @@ impl Message {
     pub fn index(&self) -> i32 {
         match *self {
             Message::Text(ref msg)   => msg.row.get_index(),
+            Message::Image(ref msg)  => msg.row.get_index(),
             Message::Date(ref msg)   => msg.row.get_index(),
             Message::System(ref msg) => msg.row.get_index()
         }
     }
 
     pub fn datetime(&self) -> Option<&DateTime<Local>> {
-        if let Message::Text(ref msg) = *self {
-            msg.datetime.as_ref()
-        } else {
-            None
+        match *self {
+            Message::Text(ref msg)   => msg.datetime.as_ref(),
+            Message::Image(ref msg)  => Some(&msg.datetime),
+            Message::System(ref msg) => Some(&msg.datetime),
+            Message::Date(_)         => None
         }
     }
 }
@@ -320,7 +325,6 @@ pub struct TextMessage {
     datetime:  Option<DateTime<Local>>,
     row:       gtk::ListBoxRow,
     grid:      gtk::Grid,
-    icon:      gtk::Image,
     time:      gtk::Label,
     delivered: bool
 }
@@ -335,8 +339,7 @@ impl TextMessage {
         grid.set_margin_bottom(6);
         grid.set_column_spacing(12);
 
-        let img = u.icon_small();
-        grid.attach(&img, 0, 0, 1, 1);
+        grid.attach(&u.icon_small(), 0, 0, 1, 1);
 
         let nme = gtk::Label::new(Some(u.name.as_ref()));
         nme.set_name("text-sender");
@@ -348,8 +351,8 @@ impl TextMessage {
         time.set_name("text-time");
         time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
         if let Some(t) = dt {
-            let tstr = t.format("%T").to_string();
-            time.set_text(&tstr)
+            time.set_text(&t.format("%T").to_string());
+            time.set_tooltip_text(Some(t.format("%F").to_string().as_ref()))
         }
         grid.attach(&time, 2, 0, 1, 1);
 
@@ -362,7 +365,7 @@ impl TextMessage {
         lbl.set_halign(Align::Fill);
         lbl.set_xalign(0.0);
         lbl.set_line_wrap(true);
-        grid.attach(&lbl, 1, 2, 1, 1);
+        grid.attach(&lbl, 1, 1, 1, 1);
 
         row.add(&grid);
         row.show_all();
@@ -371,7 +374,6 @@ impl TextMessage {
             datetime:  dt,
             row:       row,
             grid:      grid,
-            icon:      img,
             time:      time,
             delivered: false
         }
@@ -387,7 +389,7 @@ impl TextMessage {
         let tooltip = dt.format("Delivered at %T").to_string();
         check.set_tooltip_text(Some(tooltip.as_ref()));
         check.show();
-        self.grid.attach(&check, 2, 2, 1, 1);
+        self.grid.attach(&check, 2, 1, 1, 1);
         self.delivered = true
     }
 
@@ -397,6 +399,7 @@ impl TextMessage {
         }
         let tstr = dt.format("%T").to_string();
         self.time.set_text(&tstr);
+        self.time.set_tooltip_text(Some(dt.format("%F").to_string().as_ref()));
         self.datetime = Some(dt);
         self.grid.attach(&self.time, 2, 0, 1, 1)
     }
@@ -430,6 +433,112 @@ impl TextMessage {
 }
 
 #[derive(Debug, Clone)]
+pub struct Image {
+    datetime: DateTime<Local>,
+    row:      gtk::ListBoxRow,
+    image:    gtk::DrawingArea,
+    grid:     gtk::Grid,
+    time:     gtk::Label
+}
+
+impl Image {
+    pub fn new(dt: DateTime<Local>, u: &mut res::User, img: gtk::DrawingArea, win: Option<gtk::Window>) -> Image {
+        let row = gtk::ListBoxRow::new();
+        let grid = gtk::Grid::new();
+        grid.set_margin_left(6);
+        grid.set_margin_top(6);
+        grid.set_margin_right(6);
+        grid.set_margin_bottom(6);
+        grid.set_column_spacing(12);
+
+        let ico = u.icon_small();
+        grid.attach(&ico, 0, 0, 1, 1);
+
+        let nme = gtk::Label::new(Some(u.name.as_ref()));
+        nme.set_name("text-sender");
+        nme.set_tooltip_text(u.handle.as_ref().map(|h| h.as_ref()));
+        nme.set_halign(Align::Start);
+        grid.attach(&nme, 1, 0, 1, 1);
+
+        let time = gtk::Label::new(None);
+        time.set_name("text-time");
+        time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        let tstr = dt.format("%T").to_string();
+        time.set_text(&tstr);
+        time.set_tooltip_text(Some(dt.format("%F").to_string().as_ref()));
+        grid.attach(&time, 2, 0, 1, 1);
+
+        img.set_margin_top(6);
+        img.set_margin_bottom(6);
+        img.set_hexpand(true);
+        img.set_vexpand(true);
+        grid.attach(&img, 1, 1, 1, 1);
+
+        let menu = gio::Menu::new();
+        menu.append("Save as ...", "image.save");
+
+        let menu_actions = gio::SimpleActionGroup::new();
+
+        let save_action = gio::SimpleAction::new("save", None);
+        save_action.connect_activate(move |_, _| {
+            let dialog = gtk::FileChooserDialog::new(Some("Save as ..."), win.as_ref(), gtk::FileChooserAction::Save);
+            dialog.add_button("Cancel", gtk::ResponseType::Cancel.into());
+            dialog.add_button("Save", gtk::ResponseType::Accept.into());
+            dialog.set_do_overwrite_confirmation(true);
+            if dialog.run() == gtk::ResponseType::Accept.into() {
+                println!("Saving image to {:?}", dialog.get_filename())
+            }
+            dialog.destroy();
+        });
+
+        menu_actions.insert(&save_action);
+
+        let menu_btn = gtk::MenuButton::new();
+        menu_btn.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        menu_btn.set_valign(Align::Start);
+        menu_btn.set_relief(gtk::ReliefStyle::None);
+        menu_btn.insert_action_group("image", Some(&menu_actions));
+        menu_btn.set_menu_model(Some(&menu));
+        grid.attach(&menu_btn, 2, 1, 1, 1);
+
+        row.add(&grid);
+        row.show_all();
+
+        Image {
+            datetime: dt,
+            row:      row,
+            image:    img,
+            grid:     grid,
+            time:     time
+        }
+    }
+
+    pub fn start_spinner(&self) {
+        let spinner = gtk::Spinner::new();
+        spinner.set_margin_left(12);
+        spinner.set_margin_top(12);
+        spinner.set_margin_right(12);
+        spinner.set_margin_bottom(12);
+        spinner.set_hexpand(true);
+        spinner.set_vexpand(true);
+        spinner.set_size_request(32, 32);
+        spinner.start();
+        if let Some(w) = self.grid.get_child_at(1, 1) {
+            self.grid.remove(&w)
+        }
+        spinner.show();
+        self.grid.attach(&spinner, 1, 1, 1, 1)
+    }
+
+    pub fn stop_spinner(&self) {
+        if let Some(w) = self.grid.get_child_at(1, 1) {
+            self.grid.remove(&w)
+        }
+        self.grid.attach(&self.image, 1, 1, 1, 1)
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct DateHeader { row: gtk::ListBoxRow }
 
 impl DateHeader {
@@ -456,7 +565,10 @@ impl DateHeader {
 }
 
 #[derive(Debug, Clone)]
-pub struct SystemMessage { row: gtk::ListBoxRow }
+pub struct SystemMessage {
+    datetime: DateTime<Local>,
+    row:      gtk::ListBoxRow
+}
 
 impl SystemMessage {
     pub fn new(dt: DateTime<Local>, txt: &str) -> SystemMessage {
@@ -472,6 +584,7 @@ impl SystemMessage {
         let hdr = gtk::Label::new(Some("Note"));
         hdr.set_name("system-category");
         hdr.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        hdr.set_margin_right(6);
         hdr.set_halign(Align::Start);
         hbox.add(&hdr);
 
@@ -485,12 +598,17 @@ impl SystemMessage {
         let time = gtk::Label::new(Some(tstr.as_ref()));
         time.set_name("system-time");
         time.get_style_context().map(|ctx| ctx.add_class("dim-label"));
+        time.set_tooltip_text(Some(dt.format("%F").to_string().as_ref()));
+        time.set_margin_left(6);
         hbox.add(&time);
 
         row.add(&hbox);
         row.show_all();
 
-        SystemMessage { row: row }
+        SystemMessage {
+            datetime: dt,
+            row:      row
+        }
     }
 }
 

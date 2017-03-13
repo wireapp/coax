@@ -12,6 +12,7 @@ extern crate coax_ws;
 extern crate cookie;
 extern crate cryptobox;
 extern crate json;
+extern crate openssl;
 extern crate proteus;
 extern crate protobuf;
 #[macro_use]
@@ -23,6 +24,7 @@ extern crate serde_derive;
 #[macro_use]
 extern crate slog;
 extern crate slog_term;
+extern crate tempdir;
 extern crate toml;
 extern crate url;
 

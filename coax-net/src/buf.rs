@@ -93,17 +93,21 @@ impl Buf {
     pub fn consume(&mut self, n: usize) {
         self.pos += min(n, self.len())
     }
+
+    pub fn as_ptr(&self) -> *const u8 {
+        self.buf.as_ptr()
+    }
 }
 
 impl AsRef<[u8]> for Buf {
     fn as_ref(&self) -> &[u8] {
-        &self.buf.as_ref()[self.pos .. self.end]
+        &self.buf[self.pos .. self.end]
     }
 }
 
 impl AsMut<[u8]> for Buf {
     fn as_mut(&mut self) -> &mut [u8] {
-        &mut self.buf.as_mut()[self.end .. self.cap]
+        &mut self.buf[self.end .. self.cap]
     }
 }
 

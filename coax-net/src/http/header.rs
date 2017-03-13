@@ -1,3 +1,4 @@
+use std;
 use std::cmp::min;
 use std::fmt;
 use std::io::{self, ErrorKind, Write};
@@ -205,7 +206,10 @@ impl<'a> Response<'a> {
         let n = self.buffer.capacity();
         self.buffer.write_all(&bytes[0 .. min(n, bytes.len())])?;
         let mut r = httparse::Response::new(&mut self.headers);
-        match r.parse(self.buffer.as_ref()) {
+        let slice = unsafe {
+            std::slice::from_raw_parts(self.buffer.as_ptr(), self.buffer.len())
+        };
+        match r.parse(slice) {
             Ok(Status::Complete(i)) =>
                 match r.code {
                     None    => Err(io::Error::new(ErrorKind::Other, "missing response status")),
@@ -256,7 +260,7 @@ impl<'a> Response<'a> {
         self.header(TRANSFER_ENCODING).map(|v| v.as_bytes() == b"chunked").unwrap_or(false)
     }
 
-    pub fn cookie(&'a self, name: &str) -> Option<Cookie<'a>> {
+    pub fn cookie(&self, name: &str) -> Option<Cookie<'a>> {
         (&self.headers[.. self.length])
             .iter()
             .filter(|h| Name::new(h.name) == SET_COOKIE)
@@ -265,7 +269,7 @@ impl<'a> Response<'a> {
             .next()
     }
 
-    pub fn cookies(&'a self, out: &mut Vec<Cookie<'a>>) {
+    pub fn cookies(&self, out: &mut Vec<Cookie<'a>>) {
         for c in (&self.headers[.. self.length])
             .iter()
             .filter(|h| Name::new(h.name) == SET_COOKIE)

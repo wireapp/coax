@@ -10,6 +10,5 @@ pub enum Pkg {
     Contact(User<'static>, Connection),
     MembersChange(ConvStatus, DateTime<UTC>, ConvId, Vec<User<'static>>, User<'static>),
     Disconnected,
-    Connected,
-    Fin
+    Connected
 }

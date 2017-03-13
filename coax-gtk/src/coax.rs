@@ -549,7 +549,7 @@ impl Coax {
                 }
                 gtk::timeout_add(500, with!(this, app => move || {
                     for pkg in bcast_rx.try_iter() {
-                        this.on_incoming(&app, pkg);
+                        this.on_incoming(&app, pkg)
                     }
                     Continue(true)
                 }));
@@ -628,7 +628,7 @@ impl Coax {
                 }
                 gtk::timeout_add(500, with!(this, app => move || {
                     for pkg in bcast_rx.try_iter() {
-                        this.on_incoming(&app, pkg);
+                        this.on_incoming(&app, pkg)
                     }
                     Continue(true)
                 }));
@@ -674,7 +674,7 @@ impl Coax {
     // Callbacks
     //
 
-    fn on_incoming(&self, app: &gtk::Application, pkg: Pkg) -> bool {
+    fn on_incoming(&self, app: &gtk::Application, pkg: Pkg) {
         trace!(self.log, "on_incoming");
         match pkg {
             Pkg::Connected => {
@@ -692,9 +692,7 @@ impl Coax {
             Pkg::Conversation(c)              => self.on_conversation(c),
             Pkg::Contact(u, c)                => self.on_contact(app, u, c),
             Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(d, c, m, s, u),
-            Pkg::Fin                          => return true
         }
-        false
     }
 
     fn on_message(&self, app: &gtk::Application, m: coax_data::Message<'static>) {

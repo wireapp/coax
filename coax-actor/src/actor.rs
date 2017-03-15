@@ -1042,9 +1042,9 @@ impl Actor<Online> {
             debug!(self.logger, "notification already seen"; "id" => n.id.to_string());
             return Ok(())
         }
-        for e in n.events.into_owned() {
+        for e in n.events {
             match e {
-                Event::User(ety, e) => {
+                Ok(Event::User(ety, e)) => {
                     debug!(self.logger, "event"; "type" => format!("{:?}", ety));
                     match ety {
                         EventType::UserClientAdd  => self.on_client_add(e)?,
@@ -1052,7 +1052,7 @@ impl Actor<Online> {
                         _                         => {}
                     }
                 }
-                Event::Conv(ety, e) => {
+                Ok(Event::Conv(ety, e)) => {
                     debug!(self.logger, "event"; "type" => format!("{:?}", ety));
                     match ety {
                         EventType::ConvCreate      => self.on_conv_create(e)?,
@@ -1062,8 +1062,13 @@ impl Actor<Online> {
                         _                          => {}
                     }
                 }
-                Event::Unknown(e) => {
+                Ok(Event::Unknown(e)) => {
                     warn!(self.logger, "unknown event: {:?}", e)
+                }
+                Err(e) => {
+                    error!(self.logger, "could not parse notification event";
+                           "notification" => n.id.to_string(),
+                           "error"        => format!("{:?}", e))
                 }
             }
         }

@@ -12,10 +12,10 @@ use util;
 
 // Notification type ////////////////////////////////////////////////////////
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub struct Notification<'a> {
     pub id:     NotifId,
-    pub events: Cow<'a, [Event<'a>]>
+    pub events: Vec<DecodeResult<Event<'a>>>
 }
 
 impl<'a> FromJson for Notification<'a> {
@@ -27,7 +27,13 @@ impl<'a> FromJson for Notification<'a> {
             let buffer  = &mut u;
             Notification {
                 id:     req. "id"      => d.from_json(),
-                events: req. "payload" => array!(d, d.from_json()).map(Cow::Owned)
+                events: req. "payload" => {
+                    let mut v = Vec::new();
+                    for e in d.array_iter()? {
+                        v.push(e)
+                    }
+                    Ok(v)
+                }
             }
         }
     }

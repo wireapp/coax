@@ -236,14 +236,16 @@ impl Coax {
         open.connect_activate(with!(this, app, window, profile_menu, conv_bar => move |open, _| {
             let builder = Builder::new_from_string(include_str!("gtk/open-account.ui"));
             let notebook: gtk::Notebook = builder.get_object("open-notebook").unwrap();
-            let dialog: Window = builder.get_object("open-account-window").unwrap();
-            dialog.set_transient_for(Some(&window));
+            let flags  = gtk::DIALOG_USE_HEADER_BAR | gtk::DIALOG_MODAL | gtk::DIALOG_DESTROY_WITH_PARENT;
+            let dialog = gtk::Dialog::new_with_buttons(Some("Open"), Some(&window), flags, &[]);
+            dialog.get_content_area().add(&notebook);
+            dialog.add_button("Cancel", gtk::ResponseType::Cancel.into());
 
-            let cancel: Button = builder.get_object("cancel-button").unwrap();
-            cancel.connect_clicked(with!(dialog => move |_| dialog.hide()));
-
-            let submit: Button = builder.get_object("submit-button").unwrap();
+            let submit = dialog.add_button("Submit", gtk::ResponseType::Ok.into());
             submit.set_sensitive(false);
+            submit.set_can_default(true);
+            submit.grab_default();
+            submit.get_style_context().map(|ctx| ctx.add_class("suggested-action"));
 
             let reg_name: gtk::Entry = builder.get_object("register-name-entry").unwrap();
             let reg_email: gtk::Entry = builder.get_object("register-email-entry").unwrap();
@@ -268,35 +270,37 @@ impl Coax {
                 })
             };
 
-            submit.connect_clicked(with!(this, app, open, dialog, profile_menu, conv_bar => move |_| {
-                dialog.hide();
-                let enable = vec![profile_menu.clone().upcast::<gtk::Widget>(), conv_bar.clone().upcast::<gtk::Widget>()];
-                match notebook.get_current_page() {
-                    Some(0) => {
-                        let row = from_some!(profiles_list.get_selected_row());
-                        let id = ffi::get_data(&row, &ffi::KEY_ID);
-                        with! { open =>
-                            this.on_profile(&app, open, enable, id.cloned())
-                        }
-                    }
-                    Some(1) => {
-                        let email = login_email.get_text().unwrap_or(String::new());
-                        let pass = login_pass.get_text().unwrap_or(String::new());
-                        with! { open =>
-                            this.on_login(&app, open, enable, Email::new(email), Password::new(pass))
-                        }
-                    }
-                    Some(2) => {
-                        let name = reg_name.get_text().unwrap_or(String::new());
-                        let email = reg_email.get_text().unwrap_or(String::new());
-                        let pass = reg_pass.get_text().unwrap_or(String::new());
-                        this.on_register(&app, Name::new(name), Email::new(email), Password::new(pass))
-                    }
-                    _ => {}
-                }
-            }));
+            let response = dialog.run();
+            dialog.hide();
 
-            dialog.show_all()
+            if response != gtk::ResponseType::Ok.into() {
+                return ()
+            }
+
+            let enable = vec![profile_menu.clone().upcast::<gtk::Widget>(), conv_bar.clone().upcast::<gtk::Widget>()];
+            match notebook.get_current_page() {
+                Some(0) => {
+                    let row = from_some!(profiles_list.get_selected_row());
+                    let id = ffi::get_data(&row, &ffi::KEY_ID);
+                    with! { open =>
+                        this.on_profile(&app, open, enable, id.cloned())
+                    }
+                }
+                Some(1) => {
+                    let email = login_email.get_text().unwrap_or(String::new());
+                    let pass = login_pass.get_text().unwrap_or(String::new());
+                    with! { open =>
+                        this.on_login(&app, open, enable, Email::new(email), Password::new(pass))
+                    }
+                }
+                Some(2) => {
+                    let name = reg_name.get_text().unwrap_or(String::new());
+                    let email = reg_email.get_text().unwrap_or(String::new());
+                    let pass = reg_pass.get_text().unwrap_or(String::new());
+                    this.on_register(&app, Name::new(name), Email::new(email), Password::new(pass))
+                }
+                _ => {}
+            }
         }));
 
         // Find button
@@ -451,7 +455,7 @@ impl Coax {
         window.show_all()
     }
 
-    fn setup_profiles(&self, app: &gtk::Application, submit: &Button, list: &gtk::ListBox) {
+    fn setup_profiles(&self, app: &gtk::Application, submit: &gtk::Widget, list: &gtk::ListBox) {
         trace!(self.log, "setup_profiles");
         let profiles =
             match profile::load_profiles(&*self.profiles.lock().unwrap()) {
@@ -491,13 +495,14 @@ impl Coax {
         list.connect_row_selected(with!(submit => move |_, row| {
             submit.set_sensitive(row.is_some())
         }));
+        list.show_all()
     }
 
     fn proceed_registration(email: &gtk::Entry, name: &gtk::Entry, pass: &gtk::Entry) -> bool {
         3 <= name.get_text_length() && 5 <= email.get_text_length() && 8 <= pass.get_text_length()
     }
 
-    fn setup_register_entry_handlers(submit: &Button, email: &gtk::Entry, name: &gtk::Entry, pass: &gtk::Entry) {
+    fn setup_register_entry_handlers(submit: &gtk::Widget, email: &gtk::Entry, name: &gtk::Entry, pass: &gtk::Entry) {
         name.connect_key_release_event(with!(submit, email, pass => move |name, _| {
             submit.set_sensitive(Coax::proceed_registration(&email, &name, &pass));
             gtk::Inhibit(false)
@@ -516,7 +521,7 @@ impl Coax {
         5 <= email.get_text_length() && 8 <= pass.get_text_length()
     }
 
-    fn setup_login_entry_handlers(submit: &Button, email: &gtk::Entry, pass: &gtk::Entry) {
+    fn setup_login_entry_handlers(submit: &gtk::Widget, email: &gtk::Entry, pass: &gtk::Entry) {
         email.connect_key_release_event(with!(submit, pass => move |email, _| {
             submit.set_sensitive(Coax::proceed_login(&email, &pass));
             gtk::Inhibit(false)

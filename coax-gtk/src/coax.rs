@@ -363,7 +363,7 @@ impl Coax {
         })));
 
         let send = SimpleAction::new("send", None);
-        send.connect_activate(with!(this => move |_, _| {
+        send.connect_activate(with!(this, input => move |_, _| {
             if !button.is_sensitive() {
                 return ()
             }
@@ -428,6 +428,7 @@ impl Coax {
                     (_, false)   => c2.set_visible(true),
                     _            => {}
                 }
+                input.grab_focus()
             }
         });
 

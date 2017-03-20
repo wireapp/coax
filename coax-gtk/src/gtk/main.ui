@@ -126,7 +126,7 @@
     <child>
       <object class="GtkPaned" id="main-pane">
         <property name="visible">True</property>
-        <property name="can_focus">True</property>
+        <property name="can_focus">False</property>
         <child>
           <object class="GtkBox" id="conv-area-vbox">
             <property name="visible">True</property>
@@ -136,7 +136,7 @@
               <object class="GtkScrolledWindow">
                 <property name="width_request">280</property>
                 <property name="visible">True</property>
-                <property name="can_focus">True</property>
+                <property name="can_focus">False</property>
                 <child>
                   <object class="GtkViewport">
                     <property name="visible">True</property>
@@ -166,10 +166,6 @@
                   <object class="GtkToolButton" id="add-conv-button">
                     <property name="visible">True</property>
                     <property name="can_focus">True</property>
-                    <property name="has_focus">True</property>
-                    <property name="is_focus">True</property>
-                    <property name="can_default">True</property>
-                    <property name="has_default">True</property>
                     <property name="tooltip_text" translatable="yes">Add conversation...</property>
                     <property name="label" translatable="yes">Add conversation</property>
                     <property name="icon_name">list-add-symbolic</property>
@@ -182,9 +178,7 @@
                 <child>
                   <object class="GtkToolButton" id="show-cons-button">
                     <property name="visible">True</property>
-                    <property name="can_focus">False</property>
-                    <property name="can_default">True</property>
-                    <property name="has_default">True</property>
+                    <property name="can_focus">True</property>
                     <property name="tooltip_text" translatable="yes">Show contacts</property>
                     <property name="label" translatable="yes">Show contacts</property>
                     <property name="icon_name">x-office-address-book-symbolic</property>
@@ -210,7 +204,7 @@
         <child>
           <object class="GtkPaned" id="right-pane">
             <property name="visible">True</property>
-            <property name="can_focus">True</property>
+            <property name="can_focus">False</property>
             <property name="orientation">vertical</property>
             <child>
               <object class="GtkGrid" id="mainview">
@@ -275,9 +269,7 @@
                 <child>
                   <object class="GtkScrolledWindow" id="textview">
                     <property name="visible">True</property>
-                    <property name="can_focus">True</property>
-                    <property name="can_default">True</property>
-                    <property name="has_default">True</property>
+                    <property name="can_focus">False</property>
                     <property name="hexpand">True</property>
                     <property name="vexpand">True</property>
                     <child>

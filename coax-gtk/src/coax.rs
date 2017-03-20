@@ -264,7 +264,7 @@ impl Coax {
                         2 => Coax::proceed_registration(&reg_email, &reg_name, &reg_pass),
                         _ => false
                     };
-                    submit.set_sensitive(value);
+                    submit.set_sensitive(value)
                 })
             };
 

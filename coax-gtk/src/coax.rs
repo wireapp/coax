@@ -37,7 +37,6 @@ use gtk::prelude::*;
 use gtk::{self, Builder, Button, MenuButton, HeaderBar, Window};
 use gtk::{MessageDialog, MessageType, ButtonsType, Orientation};
 use gtk_sys::GTK_STYLE_PROVIDER_PRIORITY_USER;
-#[cfg(all(unix, not(target_os = "macos")))]
 use notify_rust::{Notification, NotificationHint};
 use poll::Loop;
 use profile::{self, ProfileView};
@@ -1614,7 +1613,6 @@ impl Coax {
         self.revealer.set_reveal_child(false)
     }
 
-    #[cfg(all(unix, not(target_os = "macos")))]
     fn show_notification(&self, app: &gtk::Application, u: &res::User, m: &coax_data::Message) {
         if app.get_active_window().as_ref().map(|w| w.has_toplevel_focus()).unwrap_or(false) {
             return ()
@@ -1632,10 +1630,6 @@ impl Coax {
                     warn!(self.log, "error showing system notification"; "error" => format!("{}", e))
                 })
         }
-    }
-
-    #[cfg(target_os = "macos")]
-    fn show_notification(&self, _a: &gtk::Application, _u: &res::User, _m: &coax_data::Message) {
     }
 }
 

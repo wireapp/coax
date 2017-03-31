@@ -272,7 +272,7 @@ impl Database {
                     cv.members = self.member_ids(&cv.id)?;
                     vec.push(cv)
                 }
-                let ps = from.map(|p| p.forward(vec.len() as i64)).unwrap_or(PagingState::zero());
+                let ps = from.map(|p| p.forward(vec.len() as i64)).unwrap_or(PagingState::new(vec.len() as i64));
                 Ok(Page::new(vec, ps))
             }
         }
@@ -416,7 +416,7 @@ impl Database {
                         }
                     }
                 }
-                let ps = from.map(|p| p.forward(vec.len() as i64)).unwrap_or(PagingState::zero());
+                let ps = from.map(|p| p.forward(vec.len() as i64)).unwrap_or(PagingState::new(vec.len() as i64));
                 Ok(Page::new(vec, ps))
             }
         }
@@ -568,10 +568,11 @@ impl Database {
 }
 
 
-pub struct C;
-pub struct M;
-pub struct Q;
+#[derive(Debug, Clone)] pub struct C;
+#[derive(Debug, Clone)] pub struct M;
+#[derive(Debug, Clone)] pub struct Q;
 
+#[derive(Debug, Clone)]
 pub struct PagingState<T>{
     state:    i64,
     _phantom: PhantomData<T>

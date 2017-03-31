@@ -30,6 +30,7 @@ extern crate pango_sys;
 extern crate proteus;
 extern crate quick_error;
 extern crate rand;
+extern crate signals;
 #[macro_use]
 extern crate slog;
 extern crate slog_term;

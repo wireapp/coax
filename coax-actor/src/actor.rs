@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fs::{self, DirBuilder, File};
 use std::io::{self, Cursor, Read};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{Arc, Mutex};
 use std::sync::mpsc::Sender;
@@ -471,6 +471,13 @@ impl Actor<Offline> {
 
         Ok(params)
     }
+
+    pub fn save_asset_as(&mut self, k: &AssetKey, p: &Path) -> Result<(), Error> {
+        debug!(self.logger, "saving asset"; "key" => k.as_str(), "file" => format!("{:?}", p));
+        let src = self.state.user.assets.join(k.as_str());
+        fs::copy(&src, p)?;
+        Ok(())
+    }
 }
 
 // Online state operations //////////////////////////////////////////////////
@@ -570,6 +577,13 @@ impl Actor<Online> {
         });
         self.state.user.assets.pop();
         result
+    }
+
+    pub fn save_asset_as(&mut self, k: &AssetKey, p: &Path) -> Result<(), Error> {
+        debug!(self.logger, "saving asset"; "key" => k.as_str(), "file" => format!("{:?}", p));
+        let src = self.state.user.assets.join(k.as_str());
+        fs::copy(&src, p)?;
+        Ok(())
     }
 
     pub fn decrypt_asset(&mut self, k: &AssetKey, cksum: &[u8], key: &[u8]) -> Result<(), Error> {

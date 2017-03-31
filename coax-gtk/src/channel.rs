@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::cell::RefCell;
 use std::sync::atomic::{AtomicIsize, Ordering};
@@ -14,6 +15,7 @@ use gio;
 use gtk::{self, Align};
 use gtk::prelude::*;
 use res;
+use signals::Signal;
 use util::hash;
 
 #[derive(Clone)]
@@ -34,7 +36,7 @@ pub struct Channel {
     date_lower:   Date<Local>,
     date_upper:   Date<Local>,
     paging_state: Option<PagingState<M>>,
-    cb_near_top:  Rc<RefCell<Box<Fn()>>>
+    sig_at_top:   Rc<Signal<'static, (), ()>>
 }
 
 impl Channel {
@@ -175,7 +177,7 @@ impl Channel {
             date_lower:   dt.date(),
             date_upper:   dt.date(),
             paging_state: None,
-            cb_near_top:  near_top_cb
+            sig_at_top:   Rc::new(Signal::new())
         };
 
         ch.set_name(n.as_ref().unwrap_or(&Name::new("N/A")));
@@ -183,8 +185,8 @@ impl Channel {
         ch
     }
 
-    pub fn connect_near_top<F: Fn() + 'static>(&mut self, f: F) {
-        *self.cb_near_top.borrow_mut() = Box::new(f)
+    pub fn signal_at_top(&self) -> &Signal<'static, (), ()> {
+        &self.sig_at_top
     }
 
     pub fn paging_state(&self) -> Option<&PagingState<M>> {
@@ -477,7 +479,8 @@ pub struct Image {
     row:      gtk::ListBoxRow,
     image:    gtk::DrawingArea,
     grid:     gtk::Grid,
-    time:     gtk::Label
+    time:     gtk::Label,
+    sig_save: Rc<Signal<'static, PathBuf, ()>>
 }
 
 impl Image {
@@ -513,22 +516,26 @@ impl Image {
         img.set_vexpand(true);
         grid.attach(&img, 1, 1, 1, 1);
 
+        let sig_save = Rc::new(Signal::new());
+
         let menu = gio::Menu::new();
         menu.append("Save as ...", "image.save");
 
         let menu_actions = gio::SimpleActionGroup::new();
 
         let save_action = gio::SimpleAction::new("save", None);
-        save_action.connect_activate(move |_, _| {
+        save_action.connect_activate(with!(sig_save => move |_, _| {
             let dialog = gtk::FileChooserDialog::new(Some("Save as ..."), win.as_ref(), gtk::FileChooserAction::Save);
             dialog.add_button("Cancel", gtk::ResponseType::Cancel.into());
             dialog.add_button("Save", gtk::ResponseType::Accept.into());
             dialog.set_do_overwrite_confirmation(true);
             if dialog.run() == gtk::ResponseType::Accept.into() {
-                println!("Saving image to {:?}", dialog.get_filename())
+                if let Some(path) = dialog.get_filename() {
+                    sig_save.emit(path);
+                }
             }
             dialog.destroy();
-        });
+        }));
 
         menu_actions.insert(&save_action);
 
@@ -548,8 +555,13 @@ impl Image {
             row:      row,
             image:    img,
             grid:     grid,
-            time:     time
+            time:     time,
+            sig_save: sig_save
         }
+    }
+
+    pub fn signal_save(&self) -> &Signal<'static, PathBuf, ()> {
+        &self.sig_save
     }
 
     pub fn start_spinner(&self) {

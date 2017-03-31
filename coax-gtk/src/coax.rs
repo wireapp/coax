@@ -3,6 +3,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::ffi::CString;
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -18,7 +19,7 @@ use coax_actor::config;
 use coax_api::conv::ConvType;
 use coax_api::message::send;
 use coax_api::types::{Label, Name, Email, Password, UserId, ConvId, random_uuid};
-use coax_api::user::{self, ConnectStatus};
+use coax_api::user::{self, AssetKey, ConnectStatus};
 use coax_api_proto::{Builder as MsgBuilder, GenericMessage};
 use coax_client::error::{Error as ClientError};
 use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus, ConvStatus};
@@ -786,6 +787,10 @@ impl Coax {
                             if ast.atype == AssetType::Image {
                                 let img = gtk::DrawingArea::new();
                                 let msg = Image::new(mtime, &mut usr, img.clone(), app.get_active_window());
+                                let aid = ast.id.clone();
+                                msg.signal_save().connect(with!(app => move |p| {
+                                    this.save_as(&app, aid.clone(), p.clone())
+                                }));
                                 msg.start_spinner();
                                 ch.push_msg(&m.id, Message::Image(msg));
                                 let future = self.set_image(ast, m.conv.clone(), m.id.clone(), img)
@@ -880,7 +885,7 @@ impl Coax {
         if conv.ctype == ConvType::Group {
             let mut ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
             ch.set_status(conv.status);
-            ch.connect_near_top(with!(app, cid => move || {
+            ch.signal_at_top().connect(with!(app, cid => move |_| {
                 this.on_message_demand(&app, &cid)
             }));
             self.convlist.add(ch.channel_row());
@@ -897,7 +902,7 @@ impl Coax {
                 conv.set_name(Name::new(u.name.clone()));
                 let mut ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
                 ch.set_status(conv.status);
-                ch.connect_near_top(with!(app, cid => move || {
+                ch.signal_at_top().connect(with!(app, cid => move |_| {
                     this.on_message_demand(&app, &cid)
                 }));
                 self.convlist.add(ch.channel_row());
@@ -925,7 +930,7 @@ impl Coax {
                         let mut usr = res.user_mut(&user.id).unwrap();
                         let mut chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
                         chn.set_status(conv.status);
-                        chn.connect_near_top(with!(this, app, cid => move || {
+                        chn.signal_at_top().connect(with!(this, app, cid => move |_| {
                             this.on_message_demand(&app, &cid)
                         }));
                         this.convlist.add(chn.channel_row());
@@ -1117,6 +1122,25 @@ impl Coax {
             .map_err(with!(app => move |e| {
                 error!(logger, "failed to load conversations"; "error" => format!("{:?}", e));
                 show_error(&app, &e, "Failed to load conversations", &format!("{}", e))
+            }));
+        self.futures.send(boxed(future)).unwrap()
+    }
+
+    fn save_as(&self, app: &gtk::Application, k: AssetKey<'static>, p: PathBuf) {
+        trace!(self.log, "save as");
+        let actor  = self.actor.clone();
+        let logger = self.log.clone();
+        let future = self.pool_loc.spawn_fn(move || {
+                let mut act = actor.lock().unwrap();
+                match *act {
+                    Some(Io::Offline(ref mut a)) => a.save_asset_as(&k, &p),
+                    Some(Io::Online(ref mut a))  => a.save_asset_as(&k, &p),
+                    _                            => Err(Error::Message("invalid app state"))
+                }
+            })
+            .map_err(with!(app => move |e| {
+                error!(logger, "failed to save"; "error" => format!("{:?}", e));
+                show_error(&app, &e, "Failed to save file", &format!("{}", e))
             }));
         self.futures.send(boxed(future)).unwrap()
     }
@@ -1343,6 +1367,10 @@ impl Coax {
                             MessageData::Asset(ast) => {
                                 let img = gtk::DrawingArea::new();
                                 let msg = Image::new(local, &mut usr, img.clone(), app.get_active_window());
+                                let aid = ast.id.clone();
+                                msg.signal_save().connect(with!(this, app => move |p| {
+                                    this.save_as(&app, aid.clone(), p.clone())
+                                }));
                                 msg.start_spinner();
                                 let future = this.set_image(ast, cid.clone(), m.id.clone(), img)
                                     .map_err(with!(this => move |e| {

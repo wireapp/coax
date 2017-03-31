@@ -23,6 +23,7 @@ use coax_api_proto::{Builder as MsgBuilder, GenericMessage};
 use coax_client::error::{Error as ClientError};
 use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus, ConvStatus};
 use coax_data::{AssetStatus, AssetType};
+use coax_data::db::{PagingState, C};
 use coax_data::profiles::ProfileDb;
 use coax_net::http::tls;
 use contact::Contacts;
@@ -69,6 +70,7 @@ pub struct Coax {
     me:       Rc<RefCell<User<'static>>>,
     me_box:   Rc<RefCell<gtk::Popover>>,
     res:      Rc<RefCell<res::Resources>>,
+    ch_state: Rc<RefCell<Option<PagingState<C>>>>,
     actor:    Arc<Mutex<Option<Io>>>,
     sync:     Arc<Mutex<Option<Actor<Online>>>>,
     inbox:    Arc<Mutex<Option<JoinHandle<()>>>>,
@@ -143,6 +145,7 @@ impl Coax {
             me:       Rc::new(RefCell::new(usr)),
             me_box:   Rc::new(RefCell::new(gtk::Popover::new(None : Option<&gtk::Label>))),
             res:      Rc::new(RefCell::new(res::Resources::new())),
+            ch_state: Rc::new(RefCell::new(None)),
             actor:    Arc::new(Mutex::new(Some(Io::Init(actor)))),
             sync:     Arc::new(Mutex::new(None)),
             inbox:    Arc::new(Mutex::new(None)),
@@ -441,6 +444,16 @@ impl Coax {
         app.set_accels_for_action("win.max_right", &["<Alt>Left"]);
         app.set_accels_for_action("win.max_top", &["<Alt>Down"]);
         app.set_accels_for_action("win.max_bottom", &["<Alt>Up"]);
+
+        let conv_view: gtk::ScrolledWindow = self.builder.get_object("conversation-view").unwrap();
+
+        if let Some(vadj) = conv_view.get_vadjustment() {
+            vadj.connect_value_changed(with!(this, app => move |va| {
+                if va.get_value() == va.get_upper() - va.get_page_size() { // at bottom
+                    this.on_conversation_demand(&app)
+                }
+            }));
+        }
 
         window.add(&main);
         window.set_titlebar(Some(&bar));
@@ -1098,6 +1111,16 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
+    fn on_conversation_demand(&self, app: &gtk::Application) {
+        let logger = self.log.clone();
+        let future = self.load_local_conversations(app)
+            .map_err(with!(app => move |e| {
+                error!(logger, "failed to load conversations"; "error" => format!("{:?}", e));
+                show_error(&app, &e, "Failed to load conversations", &format!("{}", e))
+            }));
+        self.futures.send(boxed(future)).unwrap()
+    }
+
     //
     // Futures
     //
@@ -1246,14 +1269,15 @@ impl Coax {
     }
 
     fn load_local_conversations(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
-        debug!(self.log, "load conversations");
-        let this  = self.clone();
-        let actor = self.actor.clone();
+        let this   = self.clone();
+        let actor  = self.actor.clone();
+        let pstate = self.ch_state.borrow().clone();
+        debug!(self.log, "load conversations"; "paging_state" => format!("{:?}", pstate));
         self.pool_loc.spawn_fn(move || {
                 let mut act = actor.lock().unwrap();
                 match *act {
-                    Some(Io::Online(ref mut a))  => a.load_conversations(None, 64), // TODO
-                    Some(Io::Offline(ref mut a)) => a.load_conversations(None, 64), // TODO
+                    Some(Io::Online(ref mut a))  => a.load_conversations(pstate, 64),
+                    Some(Io::Offline(ref mut a)) => a.load_conversations(pstate, 64),
                     _                            => Err(Error::Message("invalid app state"))
                 }
             })
@@ -1261,6 +1285,7 @@ impl Coax {
                 for c in page.data {
                     this.on_conversation(&app, c)
                 }
+                *this.ch_state.borrow_mut() = Some(page.state);
             }))
     }
 

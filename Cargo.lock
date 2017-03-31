@@ -145,7 +145,7 @@ dependencies = [
 
 [[package]]
 name = "clap"
-version = "2.22.1"
+version = "2.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "ansi_term 0.9.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -248,7 +248,7 @@ name = "coax-gtk"
 version = "0.1.0"
 dependencies = [
  "chrono 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
- "clap 2.22.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "clap 2.22.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "coax-actor 0.1.0",
  "coax-api 0.1.0",
  "coax-api-proto 0.1.0",
@@ -416,7 +416,7 @@ dependencies = [
 [[package]]
 name = "gdk"
 version = "0.5.1"
-source = "git+https://github.com/gtk-rs/gdk#1bf8a448326c585ca22d15fed71863a19f667f2d"
+source = "git+https://github.com/gtk-rs/gdk#f4a929e805bae1f1fc6f250bde44ab152bd720c6"
 dependencies = [
  "bitflags 0.5.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "cairo-rs 0.1.1 (git+https://github.com/gtk-rs/cairo)",
@@ -1203,7 +1203,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum cbor-codec 0.7.1 (registry+https://github.com/rust-lang/crates.io-index)" = "e083a023562b37c52837e850131a51b1154cceb9d149f41ee3d386737b140f46"
 "checksum chrono 0.2.25 (registry+https://github.com/rust-lang/crates.io-index)" = "9213f7cd7c27e95c2b57c49f0e69b1ea65b27138da84a170133fd21b07659c00"
 "checksum chrono 0.3.0 (registry+https://github.com/rust-lang/crates.io-index)" = "158b0bd7d75cbb6bf9c25967a48a2e9f77da95876b858eadfabaa99cd069de6e"
-"checksum clap 2.22.1 (registry+https://github.com/rust-lang/crates.io-index)" = "e17a4a72ffea176f77d6e2db609c6c919ef221f23862c9915e687fb54d833485"
+"checksum clap 2.22.2 (registry+https://github.com/rust-lang/crates.io-index)" = "3cae8c5a1108961e9bafb1096b8cbb6a31c17ab1a276ce9b52334be99962f653"
 "checksum cookie 0.7.3 (registry+https://github.com/rust-lang/crates.io-index)" = "bddd4a5a2e137f7c07dc2ec66e83d8da331b413fb0fc3319cfe4b52cb8ddd9a9"
 "checksum cryptobox 1.0.0 (git+https://github.com/wireapp/cryptobox.git?branch=reshuffle2)" = "<none>"
 "checksum dbus 0.4.1 (registry+https://github.com/rust-lang/crates.io-index)" = "58ec7b4cac6f79f36af1cd9cfdb9b935fc5a4e899f494ee03a3a6165f7d10b4b"

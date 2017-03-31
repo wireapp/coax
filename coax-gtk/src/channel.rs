@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::cell::RefCell;
 use std::sync::atomic::{AtomicIsize, Ordering};
 
 use chrono::{Date, DateTime, Local};
@@ -122,16 +121,14 @@ impl Channel {
         let message_view = gtk::ScrolledWindow::new(None, None);
         message_view.add(&message_list);
 
-        let id: Box<Fn() + 'static> = Box::new(|| ());
-        let near_top_cb = Rc::new(RefCell::new(id));
-        let autoscroll  = Rc::new(AtomicIsize::new(-1));
+        let sig_at_top = Rc::new(Signal::new());
+        let autoscroll = Rc::new(AtomicIsize::new(-1));
 
         if let Some(vadj) = message_view.get_vadjustment() {
-            vadj.connect_value_changed(with!(near_top_cb, autoscroll => move |va| {
+            vadj.connect_value_changed(with!(sig_at_top, autoscroll => move |va| {
                 let len = va.get_upper() - va.get_page_size();
                 if va.get_value() < 1.0 { // top
-                    let f = near_top_cb.borrow();
-                    f();
+                    sig_at_top.emit(());
                     autoscroll.store(len as isize, Ordering::Relaxed);
                 } else if va.get_value() == len { // at bottom
                     autoscroll.store(-1, Ordering::Relaxed);
@@ -177,7 +174,7 @@ impl Channel {
             date_lower:   dt.date(),
             date_upper:   dt.date(),
             paging_state: None,
-            sig_at_top:   Rc::new(Signal::new())
+            sig_at_top:   sig_at_top
         };
 
         ch.set_name(n.as_ref().unwrap_or(&Name::new("N/A")));

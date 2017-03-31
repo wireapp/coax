@@ -8,7 +8,7 @@ pub struct Ticket(usize);
 
 pub struct Signal<'a, A, B> {
     index: AtomicUsize,
-    slots: Mutex<BTreeMap<Ticket, Box<Fn(&A) -> B + 'a>>>
+    slots: Mutex<BTreeMap<Ticket, Box<FnMut(&A) -> B + 'a>>>
 }
 
 impl<'a, A, B> Signal<'a, A, B> {
@@ -19,7 +19,7 @@ impl<'a, A, B> Signal<'a, A, B> {
         }
     }
 
-    pub fn connect<F: Fn(&A) -> B + 'a>(&self, f: F) -> Ticket {
+    pub fn connect<F: FnMut(&A) -> B + 'a>(&self, f: F) -> Ticket {
         let     index = self.index.fetch_add(1, Ordering::SeqCst);
         let mut slots = self.slots.lock().unwrap();
         slots.insert(Ticket(index), Box::new(f));
@@ -32,8 +32,8 @@ impl<'a, A, B> Signal<'a, A, B> {
 
     pub fn emit(&self, a: A) -> Option<B> {
         let mut x = None;
-        let slots = self.slots.lock().unwrap();
-        for f in slots.values() {
+        let mut slots = self.slots.lock().unwrap();
+        for f in slots.values_mut() {
             x = Some(f(&a))
         }
         x

@@ -1,4 +1,5 @@
 use std;
+use std::fmt;
 use std::path::Path;
 use std::marker::PhantomData;
 
@@ -568,11 +569,11 @@ impl Database {
 }
 
 
-#[derive(Debug, Clone)] pub struct C;
-#[derive(Debug, Clone)] pub struct M;
-#[derive(Debug, Clone)] pub struct Q;
+#[derive(Clone)] pub struct C;
+#[derive(Clone)] pub struct M;
+#[derive(Clone)] pub struct Q;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct PagingState<T>{
     state:    i64,
     _phantom: PhantomData<T>
@@ -592,6 +593,12 @@ impl<T> PagingState<T> {
 
     fn forward(self, s: i64) -> PagingState<T> {
         PagingState::new(self.state + s)
+    }
+}
+
+impl<T> fmt::Debug for PagingState<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "PagingState {{ state: {} }}", self.state)
     }
 }
 

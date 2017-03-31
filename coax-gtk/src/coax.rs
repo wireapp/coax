@@ -204,7 +204,7 @@ impl Coax {
         self.contacts.borrow().set_refresh_action(with!(this, app => move |btn| {
             let future =
                 this.load_remote_contacts(&app)
-                    .and_then(with!(this => move |()| this.load_remote_conversations()))
+                    .and_then(with!(this, app => move |()| this.load_remote_conversations(&app)))
                     .map(with!(btn => move |()| { btn.set_sensitive(true) }))
                     .map_err(with!(this, app => move |e| {
                         btn.set_sensitive(true);
@@ -323,13 +323,7 @@ impl Coax {
                 ffi::get_data(r, &ffi::KEY_ID).map(|id| {
                     if let Some(ch) = this.channels.borrow().get(id) {
                         if !ch.is_init() {
-                            let f =
-                                this.load_messages(&app, id)
-                                    .map_err(with!(this, app => move |e| {
-                                        error!(this.log, "failed to load messages"; "error" => format!("{:?}", e));
-                                        show_error(&app, &e, "Failed to load messages", &format!("{}", e))
-                                    }));
-                            this.futures.send(boxed(f)).unwrap()
+                            this.on_message_demand(&app, &id)
                         }
                         ch.set_read();
                         this.mainview.remove_row(0);
@@ -619,9 +613,9 @@ impl Coax {
                     Continue(true)
                 }));
                 if is_new_client {
-                    boxed(this.load_remote_conversations().and_then(with!(this => move |()| this.load_remote_contacts(&app))))
+                    boxed(this.load_remote_conversations(&app).and_then(with!(this => move |()| this.load_remote_contacts(&app))))
                 } else {
-                    boxed(this.load_local_conversations())
+                    boxed(this.load_local_conversations(&app))
                 }
             }))
             .and_then(with!(this => move |()| {
@@ -697,7 +691,7 @@ impl Coax {
                     }
                     Continue(true)
                 }));
-                this.load_local_conversations()
+                this.load_local_conversations(&app)
             }))
             .and_then(with!(this => move |()| {
                 this.pool_loc.spawn_fn(move || {
@@ -753,10 +747,10 @@ impl Coax {
             }
             Pkg::Disconnected                 => self.show_info("Connection lost. Reconnecting ..."),
             Pkg::Message(m)                   => self.on_message(app, m),
-            Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(m, c, t, s),
-            Pkg::Conversation(c)              => self.on_conversation(c),
+            Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(app, m, c, t, s),
+            Pkg::Conversation(c)              => self.on_conversation(app, c),
             Pkg::Contact(u, c)                => self.on_contact(app, u, c),
-            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(d, c, m, s, u)
+            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(app, d, c, m, s, u)
         }
     }
 
@@ -811,7 +805,7 @@ impl Coax {
             let future = self.conversation(&m.conv)
                 .map(with!(this, app => move |conv| {
                     if let Some(c) = conv {
-                        this.on_conversation(c);
+                        this.on_conversation(&app, c);
                         this.on_message(&app, m)
                     } else {
                         error!(this.log, "failed to resolve conversation"; "id" => conv_id)
@@ -824,7 +818,7 @@ impl Coax {
         }
     }
 
-    fn on_message_update(&self, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
+    fn on_message_update(&self, app: &gtk::Application, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
         debug!(self.log, "on_message_update"; "conv" => c.to_string(), "id" => id);
         if let Some(mut ch) = self.channels.borrow_mut().get_mut(&c) {
             if let Some(&mut Message::Text(ref mut msg)) = ch.get_msg_mut(&id) {
@@ -839,11 +833,11 @@ impl Coax {
             let this   = self.clone();
             let logger = self.log.clone();
             let future = self.conversation(&c)
-                .map(with!(this => move |conv| {
+                .map(with!(this, app => move |conv| {
                     if let Some(c) = conv {
                         let cid = c.id.clone();
-                        this.on_conversation(c);
-                        this.on_message_update(id, cid, t, s)
+                        this.on_conversation(&app, c);
+                        this.on_message_update(&app, id, cid, t, s)
                     } else {
                         error!(this.log, "failed to resolve conversation"; "id" => c.to_string());
                     }
@@ -855,7 +849,7 @@ impl Coax {
         }
     }
 
-    fn on_conversation(&self, mut conv: Conversation<'static>) {
+    fn on_conversation(&self, app: &gtk::Application, mut conv: Conversation<'static>) {
         debug!(self.log, "on_conversation"; "conv" => conv.id.to_string());
         if self.channels.borrow().contains_key(&conv.id) {
             debug!(self.log, "conversation already loaded"; "conv" => conv.id.to_string());
@@ -867,9 +861,15 @@ impl Coax {
             return ()
         }
 
+        let this = self.clone();
+        let cid  = conv.id.clone();
+
         if conv.ctype == ConvType::Group {
             let mut ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
             ch.set_status(conv.status);
+            ch.connect_near_top(with!(app, cid => move || {
+                this.on_message_demand(&app, &cid)
+            }));
             self.convlist.add(ch.channel_row());
             self.channels.borrow_mut().insert(conv.id, ch);
             self.convlist.show_all();
@@ -884,6 +884,9 @@ impl Coax {
                 conv.set_name(Name::new(u.name.clone()));
                 let mut ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
                 ch.set_status(conv.status);
+                ch.connect_near_top(with!(app, cid => move || {
+                    this.on_message_demand(&app, &cid)
+                }));
                 self.convlist.add(ch.channel_row());
                 self.channels.borrow_mut().insert(conv.id, ch);
                 self.convlist.show_all();
@@ -901,7 +904,7 @@ impl Coax {
 
         let this   = self.clone();
         let future = self.user(user_id.clone(), true)
-            .map(with!(this => move |u| {
+            .map(with!(this, app => move |u| {
                 if let Some(user) = u {
                     if !this.channels.borrow().contains_key(&conv.id) {
                         this.ensure_user_res(&user);
@@ -909,6 +912,9 @@ impl Coax {
                         let mut usr = res.user_mut(&user.id).unwrap();
                         let mut chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
                         chn.set_status(conv.status);
+                        chn.connect_near_top(with!(this, app, cid => move || {
+                            this.on_message_demand(&app, &cid)
+                        }));
                         this.convlist.add(chn.channel_row());
                         this.channels.borrow_mut().insert(conv.id, chn);
                         this.convlist.show_all()
@@ -945,16 +951,16 @@ impl Coax {
         }));
     }
 
-    fn on_members_change(&self, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
+    fn on_members_change(&self, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
         debug!(self.log, "on_members_change"; "conv" => cid.to_string());
         match self.channels.borrow_mut().entry(cid.clone()) {
             Entry::Vacant(_) => {
                 let this   = self.clone();
                 let future = self.conversation(&cid)
-                    .map(with!(this => move |conv| {
+                    .map(with!(this, app => move |conv| {
                         if let Some(c) = conv {
-                            this.on_conversation(c);
-                            this.on_members_change(dt, cid, members, s, from)
+                            this.on_conversation(&app, c);
+                            this.on_members_change(&app, dt, cid, members, s, from)
                         } else {
                             error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
                         }
@@ -1035,7 +1041,7 @@ impl Coax {
             })
             .map(with!(this, app => move |data| {
                 match data {
-                    Data::Conv(c) => this.on_conversation(c),
+                    Data::Conv(c) => this.on_conversation(&app, c),
                     Data::Sent    => show_message(&app, MessageType::Info, "Connection request sent", "", None),
                     Data::NoUser  => show_message(&app, MessageType::Error, "User not found", "", None),
                     Data::Invalid(s) => {
@@ -1065,10 +1071,9 @@ impl Coax {
                     Err(Error::Message("invalid app state"))
                 }
             })
-            .and_then(with!(this => move |updated| {
+            .and_then(with!(this, app => move |updated| {
                 if updated && new == ConnectStatus::Accepted {
-                    let f = this.conversation(&cid).map(move |conv| conv.map(|c| this.on_conversation(c)));
-                    boxed(f)
+                    boxed(this.conversation(&cid).map(move |conv| conv.map(|c| this.on_conversation(&app, c))))
                 } else {
                     boxed(futures::finished(None))
                 }
@@ -1079,6 +1084,16 @@ impl Coax {
             .map_err(with!(app => move |e| {
                 error!(this.log, "failed to update status"; "error" => format!("{}", e));
                 show_error(&app, &e, "Failed to update status", "")
+            }));
+        self.futures.send(boxed(future)).unwrap()
+    }
+
+    fn on_message_demand(&self, app: &gtk::Application, cid: &ConvId) {
+        let logger = self.log.clone();
+        let future = self.load_messages(app, cid)
+            .map_err(with!(app => move |e| {
+                error!(logger, "failed to load messages"; "error" => format!("{:?}", e));
+                show_error(&app, &e, "Failed to load messages", &format!("{}", e))
             }));
         self.futures.send(boxed(future)).unwrap()
     }
@@ -1230,7 +1245,7 @@ impl Coax {
             }))
     }
 
-    fn load_local_conversations(&self) -> impl Future<Item=(), Error=Error> {
+    fn load_local_conversations(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "load conversations");
         let this  = self.clone();
         let actor = self.actor.clone();
@@ -1242,14 +1257,14 @@ impl Coax {
                     _                            => Err(Error::Message("invalid app state"))
                 }
             })
-            .map(move |page| {
+            .map(with!(app => move |page| {
                 for c in page.data {
-                    this.on_conversation(c)
+                    this.on_conversation(&app, c)
                 }
-            })
+            }))
     }
 
-    fn load_remote_conversations(&self) -> impl Future<Item=(), Error=Error> {
+    fn load_remote_conversations(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "load remote conversations");
         let this = self.clone();
         let sync = self.sync.clone();
@@ -1261,32 +1276,31 @@ impl Coax {
                     Err(Error::Message("invalid app state"))
                 }
             })
-            .and_then(with!(this => move |()| {
-                this.load_local_conversations()
+            .and_then(with!(this, app => move |()| {
+                this.load_local_conversations(&app)
             }))
     }
 
     fn load_messages(&self, app: &gtk::Application, cid: &ConvId) -> impl Future<Item=(), Error=Error> {
-        debug!(self.log, "load conversation messages"; "id" => cid.to_string());
         let this    = self.clone();
         let actor   = self.actor.clone();
         let conv_id = cid.clone();
+        let pstate  = self.channels.borrow().get(&cid).and_then(|ch| ch.paging_state().cloned());
+        debug!(self.log, "load conversation messages"; "id" => cid.to_string(), "paging_state" => format!("{:?}", pstate));
         self.pool_loc.spawn_fn(move || {
                 let mut act = actor.lock().unwrap();
                 match *act {
-                    Some(Io::Online(ref mut a))  => a.load_messages(&conv_id, None, 64), // TODO
-                    Some(Io::Offline(ref mut a)) => a.load_messages(&conv_id, None, 64), // TODO
+                    Some(Io::Online(ref mut a))  => a.load_messages(&conv_id, pstate, 32),
+                    Some(Io::Offline(ref mut a)) => a.load_messages(&conv_id, pstate, 32),
                     _                            => Err(Error::Message("invalid app state"))
                 }
             })
             .map(with!(this, cid, app => move |mm| {
                 if let Some(mut chan) = this.channels.borrow_mut().get_mut(&cid) {
-                    let mut new_content = false;
                     for m in mm.data {
                         if chan.has_msg(&m.id) {
                             continue
                         }
-                        new_content = true;
                         this.ensure_user_res(&m.user);
                         let local   = m.time.with_timezone(&this.timezone);
                         let mut res = this.res.borrow_mut();
@@ -1323,9 +1337,7 @@ impl Coax {
                         };
                         chan.push_front_msg(&m.id, message)
                     }
-                    if new_content {
-                        chan.push_front_date()
-                    }
+                    chan.set_paging_state(mm.state);
                     chan.set_init()
                 };
             }))
@@ -1627,7 +1639,7 @@ impl Coax {
                 .show()
                 .map(|_| ())
                 .unwrap_or_else(|e| {
-                    warn!(self.log, "error showing system notification"; "error" => format!("{}", e))
+                    warn!(self.log, "error showing system notification"; "error" => format!("{:?}", e))
                 })
         }
     }

@@ -1,9 +1,11 @@
 use std::rc::Rc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::cell::RefCell;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use chrono::{Date, DateTime, Local};
 use coax_api::conv::ConvType;
 use coax_data::ConvStatus;
+use coax_data::db::{PagingState, M};
 use coax_api::types::{Name, ConvId};
 use ffi;
 use fnv::FnvHashMap;
@@ -28,9 +30,11 @@ pub struct Channel {
     model:        FnvHashMap<u64, Message>,
     init:         bool,
     status:       ConvStatus,
-    autoscroll:   Rc<AtomicBool>,
+    autoscroll:   Rc<AtomicIsize>,
     date_lower:   Date<Local>,
-    date_upper:   Date<Local>
+    date_upper:   Date<Local>,
+    paging_state: Option<PagingState<M>>,
+    cb_near_top:  Rc<RefCell<Box<Fn()>>>
 }
 
 impl Channel {
@@ -116,20 +120,41 @@ impl Channel {
         let message_view = gtk::ScrolledWindow::new(None, None);
         message_view.add(&message_list);
 
-        let autoscroll = Rc::new(AtomicBool::new(true));
+        let id: Box<Fn() + 'static> = Box::new(|| ());
+        let near_top_cb = Rc::new(RefCell::new(id));
+        let autoscroll  = Rc::new(AtomicIsize::new(-1));
+
         if let Some(vadj) = message_view.get_vadjustment() {
-            vadj.connect_value_changed(with!(autoscroll => move |va| {
-                let at_bottom = va.get_value() == va.get_upper() - va.get_page_size();
-                autoscroll.store(at_bottom, Ordering::Relaxed)
+            vadj.connect_value_changed(with!(near_top_cb, autoscroll => move |va| {
+                let len = va.get_upper() - va.get_page_size();
+                if va.get_value() < 1.0 { // top
+                    let f = near_top_cb.borrow();
+                    f();
+                    autoscroll.store(len as isize, Ordering::Relaxed);
+                } else if va.get_value() == len { // at bottom
+                    autoscroll.store(-1, Ordering::Relaxed);
+                } else { // in between
+                    autoscroll.store(0, Ordering::Relaxed)
+                }
+            }));
+
+            vadj.connect_changed(with!(message_view, autoscroll => move |va| {
+                let old_len = autoscroll.load(Ordering::Relaxed);
+                let new_len = va.get_upper() - va.get_page_size();
+                if old_len > 0 {
+                    va.set_value(new_len - old_len as f64);
+                    message_view.set_vadjustment(&va);
+                    autoscroll.store(0, Ordering::Relaxed)
+                }
             }));
         }
+
         message_list.connect_size_allocate(with!(message_view, autoscroll => move |_, _| {
-            if !autoscroll.load(Ordering::Relaxed) {
-                return ()
-            }
-            if let Some(vadj) = message_view.get_vadjustment() {
-                vadj.set_value(vadj.get_upper() - vadj.get_page_size());
-                message_view.set_vadjustment(&vadj)
+            if autoscroll.load(Ordering::Relaxed) < 0 {
+                if let Some(va) = message_view.get_vadjustment() {
+                    va.set_value(va.get_upper() - va.get_page_size()); // position at bottom
+                    message_view.set_vadjustment(&va)
+                }
             }
         }));
 
@@ -148,12 +173,26 @@ impl Channel {
             status:       ConvStatus::Current,
             autoscroll:   autoscroll,
             date_lower:   dt.date(),
-            date_upper:   dt.date()
+            date_upper:   dt.date(),
+            paging_state: None,
+            cb_near_top:  near_top_cb
         };
 
         ch.set_name(n.as_ref().unwrap_or(&Name::new("N/A")));
         ch.set_time(dt);
         ch
+    }
+
+    pub fn connect_near_top<F: Fn() + 'static>(&mut self, f: F) {
+        *self.cb_near_top.borrow_mut() = Box::new(f)
+    }
+
+    pub fn paging_state(&self) -> Option<&PagingState<M>> {
+        self.paging_state.as_ref()
+    }
+
+    pub fn set_paging_state(&mut self, p: PagingState<M>) {
+        self.paging_state = Some(p)
     }
 
     pub fn conv_type(&self) -> ConvType {

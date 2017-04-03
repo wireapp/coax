@@ -47,7 +47,6 @@ quick-error        = ">= 1.1"
 pango-sys          = { git = "https://github.com/gtk-rs/sys" }
 proteus            = { git = "https://github.com/wireapp/proteus.git", branch = "develop" }
 rand               = ">= 0.3"
-signals            = { path = "../signals" }
 slog               = { version = ">= 1.0", features = ["std", "max_level_debug" ] }
 slog-term          = ">= 0.5"
 url                = ">= 1.1"

@@ -30,7 +30,6 @@ extern crate pango_sys;
 extern crate proteus;
 extern crate quick_error;
 extern crate rand;
-extern crate signals;
 #[macro_use]
 extern crate slog;
 extern crate slog_term;
@@ -53,6 +52,7 @@ mod coax;
 mod poll;
 mod profile;
 mod res;
+mod signals;
 
 fn main() {
     let args = App::new("coax")

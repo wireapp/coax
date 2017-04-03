@@ -26,6 +26,7 @@ impl<'a, A, B> Signal<'a, A, B> {
         Ticket(index)
     }
 
+    #[allow(dead_code)]
     pub fn disconnect(&self, t: Ticket) {
         self.slots.lock().unwrap().remove(&t);
     }

@@ -7,7 +7,6 @@ members = [
     "coax-data",
     "coax-gtk",
     "coax-net",
-    "coax-ws",
-    "signals"
+    "coax-ws"
 ]
 

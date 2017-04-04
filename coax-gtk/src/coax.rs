@@ -14,7 +14,7 @@ use std::time::Duration;
 use channel::{Channel, Message, TextMessage, Image};
 use chrono::{DateTime, Local, UTC};
 use coax_actor::{Actor, Error, Pkg, Delivery};
-use coax_actor::actor::{Init, Connected, Offline, Online};
+use coax_actor::actor::{Offline, Online};
 use coax_actor::config;
 use coax_api::conv::ConvType;
 use coax_api::message::send;
@@ -26,10 +26,11 @@ use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus
 use coax_data::{AssetStatus, AssetType};
 use coax_data::db::{PagingState, C};
 use coax_data::profiles::ProfileDb;
-use coax_net::http::tls;
+use coax_net::http::tls::{self, Tls};
 use contact::Contacts;
 use ffi;
-use futures::{self, Future};
+use futures::Future;
+use futures::future;
 use futures_cpupool::{self as pool, CpuPool};
 use gdk::prelude::ContextExt;
 use gdk_pixbuf::{InterpType, Pixbuf};
@@ -45,37 +46,33 @@ use profile::{self, ProfileView};
 use res;
 use slog::Logger;
 
-enum Io {
-    Init(Actor<Init>),
-    Connected(Actor<Connected>),
-    Offline(Actor<Offline>),
-    Online(Actor<Online>)
-}
-
 #[derive(Clone)]
 pub struct Coax {
-    log:      Logger,
-    pool_rem: CpuPool, // sending & receiving threads (remote)
-    pool_loc: CpuPool, // threads acting on local state
-    futures:  Sender<Box<Future<Item=(), Error=()>>>,
-    profiles: Arc<Mutex<ProfileDb>>,
-    builder:  gtk::Builder,
-    info:     gtk::Label,
-    revealer: gtk::Revealer,
-    mainview: gtk::Grid,
-    convlist: gtk::ListBox,
-    send_btn: gtk::Button,
-    timezone: Local,
-    channels: Rc<RefCell<HashMap<ConvId, Channel>>>,
-    contacts: Rc<RefCell<Contacts>>,
-    me:       Rc<RefCell<User<'static>>>,
-    me_box:   Rc<RefCell<gtk::Popover>>,
-    res:      Rc<RefCell<res::Resources>>,
-    ch_state: Rc<RefCell<Option<PagingState<C>>>>,
-    actor:    Arc<Mutex<Option<Io>>>,
-    sync:     Arc<Mutex<Option<Actor<Online>>>>,
-    inbox:    Arc<Mutex<Option<JoinHandle<()>>>>,
-    is_sync:  Arc<AtomicBool>
+    log:       Logger,
+    config:    config::Main,
+    tls:       Arc<Tls>,
+    pool_on:   CpuPool, // sending & receiving threads (online)
+    pool_off:  CpuPool, // threads acting on local state (offline)
+    actor_on:  Arc<Mutex<Option<Actor<Online>>>>,
+    actor_off: Arc<Mutex<Option<Actor<Offline>>>>,
+    inbox:     Arc<Mutex<Option<JoinHandle<()>>>>,
+    is_sync:   Arc<AtomicBool>, // notifications are fetched from the server
+    complete:  Arc<AtomicBool>, // `actor_on` and `actor_off` are not `None`
+    futures:   Sender<Box<Future<Item=(), Error=()>>>,
+    profiles:  Arc<Mutex<ProfileDb>>,
+    builder:   gtk::Builder,
+    info:      gtk::Label,
+    revealer:  gtk::Revealer,
+    mainview:  gtk::Grid,
+    convlist:  gtk::ListBox,
+    send_btn:  gtk::Button,
+    timezone:  Local,
+    channels:  Rc<RefCell<HashMap<ConvId, Channel>>>,
+    contacts:  Rc<RefCell<Contacts>>,
+    me:        Rc<RefCell<User<'static>>>,
+    me_box:    Rc<RefCell<gtk::Popover>>,
+    res:       Rc<RefCell<res::Resources>>,
+    ch_state:  Rc<RefCell<Option<PagingState<C>>>>
 }
 
 macro_rules! from_some {
@@ -102,7 +99,6 @@ impl Coax {
         let log      = g.new(o!("context" => "Ui"));
         let tls      = Arc::new(tls::context()?);
         let pdb      = profile::open_profile_db(&log, &cfg)?;
-        let actor    = Actor::new(&log, cfg, tls)?;
         let builder  = Builder::new_from_string(include_str!("gtk/main.ui"));
         let info     = builder.get_object("info-label").unwrap();
         let sendbtn  = builder.get_object("send-button").unwrap();
@@ -129,28 +125,31 @@ impl Coax {
         let usr = User::new(UserId::rand(), Name::new(""));
 
         let coax = Coax {
-            log:      log,
-            pool_rem: pool::Builder::new().pool_size(1).name_prefix("rem-").create(),
-            pool_loc: pool::Builder::new().pool_size(1).name_prefix("loc-").create(),
-            futures:  tx,
-            profiles: Arc::new(Mutex::new(pdb)),
-            builder:  builder,
-            info:     info,
-            revealer: revealer,
-            mainview: mainview,
-            convlist: convlist,
-            send_btn: sendbtn,
-            timezone: Local::now().timezone(),
-            contacts: Rc::new(RefCell::new(Contacts::new())),
-            channels: Rc::new(RefCell::new(HashMap::new())),
-            me:       Rc::new(RefCell::new(usr)),
-            me_box:   Rc::new(RefCell::new(gtk::Popover::new(None : Option<&gtk::Label>))),
-            res:      Rc::new(RefCell::new(res::Resources::new())),
-            ch_state: Rc::new(RefCell::new(None)),
-            actor:    Arc::new(Mutex::new(Some(Io::Init(actor)))),
-            sync:     Arc::new(Mutex::new(None)),
-            inbox:    Arc::new(Mutex::new(None)),
-            is_sync:  Arc::new(AtomicBool::new(false))
+            log:       log,
+            config:    cfg.clone(),
+            tls:       tls.clone(),
+            actor_on:  Arc::new(Mutex::new(None)),
+            actor_off: Arc::new(Mutex::new(None)),
+            pool_on:   pool::Builder::new().pool_size(1).name_prefix("rem-").create(),
+            pool_off:  pool::Builder::new().pool_size(1).name_prefix("loc-").create(),
+            inbox:     Arc::new(Mutex::new(None)),
+            is_sync:   Arc::new(AtomicBool::new(false)),
+            complete:  Arc::new(AtomicBool::new(false)),
+            futures:   tx,
+            profiles:  Arc::new(Mutex::new(pdb)),
+            builder:   builder,
+            info:      info,
+            revealer:  revealer,
+            mainview:  mainview,
+            convlist:  convlist,
+            send_btn:  sendbtn,
+            timezone:  Local::now().timezone(),
+            contacts:  Rc::new(RefCell::new(Contacts::new())),
+            channels:  Rc::new(RefCell::new(HashMap::new())),
+            me:        Rc::new(RefCell::new(usr)),
+            me_box:    Rc::new(RefCell::new(gtk::Popover::new(None : Option<&gtk::Label>))),
+            res:       Rc::new(RefCell::new(res::Resources::new())),
+            ch_state:  Rc::new(RefCell::new(None))
         };
 
         app.connect_startup(Coax::startup);
@@ -542,17 +541,13 @@ impl Coax {
     fn on_register(&self, app: &gtk::Application, n: Name<'static>, e: Email<'static>, p: Password<'static>) {
         debug!(self.log, "on_register"; "e-mail" => e.as_str());
         let this   = self.clone();
-        let actor  = self.actor.clone();
+        let actor  = Actor::new(&self.log, self.config.clone(), self.tls.clone());
         let future =
-            self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                Coax::ensure_connected(&mut *act)?;
+            self.pool_on.spawn_fn(move || {
                 let params = user::register::Params::email(e, n, p);
-                if let Some(Io::Connected(ref mut a)) = *act {
-                    a.register_user(&params)
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
+                let client = actor.connect()?;
+                let mut a  = actor.connected(client);
+                a.register_user(&params)
             })
             .map(with!(app, this => move |()| {
                 this.hide_info();
@@ -572,43 +567,32 @@ impl Coax {
         debug!(self.log, "on_login"; "e-mail" => e.as_str());
         let (bcast_tx, bcast_rx) = std::sync::mpsc::channel();
 
+        let actor     = Actor::new(&self.log, self.config.clone(), self.tls.clone());
+        let actor_on  = self.actor_on.clone();
+        let actor_off = self.actor_off.clone();
+
         let this   = self.clone();
-        let actor  = self.actor.clone();
-        let sync   = self.sync.clone();
         let inbox  = self.inbox.clone();
         let profs  = self.profiles.clone();
         let future =
-            self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                Coax::ensure_connected(&mut *act)?;
-                let params = user::login::Params::email(e, p, Label::new("coax-gtk"));
-                if let Some(Io::Connected(mut a)) = act.take() {
-                    match a.login(&params) {
-                        Ok(usr) => {
-                            let a2 = a.online(usr, bcast_tx);
-                            let me = a2.me().clone();
-                            *act = Some(Io::Online(a2));
-                            profs.lock().unwrap().insert(&me)?
-                        }
-                        Err(e) => {
-                            *act = Some(Io::Connected(a));
-                            return Err(e)
-                        }
-                    }
-                } else {
-                    return Err(Error::Message("invalid app state"))
-                }
-                if let Some(Io::Online(ref mut a)) = *act {
-                    let mut i = a.new_inbox()?;
-                    let     w = i.connect()?;
-                    *inbox.lock().unwrap() = Some(i.fork(w));
-                    *sync.lock().unwrap() = Some(a.clone()?);
-                    Ok((a.me().clone(), a.is_new_client()))
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
+            self.pool_on.spawn_fn(move || {
+                let client    = actor.connect()?;
+                let mut actor = actor.connected(client);
+                let params    = user::login::Params::email(e, p, Label::new("coax-gtk"));
+                let user      = actor.login(&params)?;
+                let mut actor = actor.online(user, bcast_tx);
+                let me        = actor.me().clone();
+                let is_new    = actor.is_new_client();
+                profs.lock().unwrap().insert(&me)?;
+                let mut i = actor.new_inbox()?;
+                let     w = i.connect()?;
+                *inbox.lock().unwrap()     = Some(i.fork(w));
+                *actor_off.lock().unwrap() = Some(actor.clone_offline()?);
+                *actor_on.lock().unwrap()  = Some(actor);
+                Ok((me, is_new))
             })
             .and_then(with!(this, app => move |(me, is_new_client)| {
+                this.complete.store(true, Ordering::Relaxed);
                 this.show_info("Loading conversations ...");
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
@@ -662,30 +646,20 @@ impl Coax {
 
         let (bcast_tx, bcast_rx) = std::sync::mpsc::channel();
 
+        let mut actor = Actor::new(&self.log, self.config.clone(), self.tls.clone());
+        let actor_on  = self.actor_on.clone();
+        let actor_off = self.actor_off.clone();
+
         let this   = self.clone();
         let logger = self.log.clone();
-        let actor  = self.actor.clone();
-        let sync   = self.sync.clone();
         let inbox  = self.inbox.clone();
         let future =
-            self.pool_loc.spawn_fn(with!(actor => move || {
-                let mut act = actor.lock().unwrap();
-                if let Some(Io::Init(mut a)) = act.take() {
-                    match a.profile(&user_id) {
-                        Ok(usr) => {
-                            let a2 = a.offline(usr, bcast_tx);
-                            let me = a2.me().clone();
-                            *act = Some(Io::Offline(a2));
-                            Ok(me)
-                        }
-                        Err(e) => {
-                            *act = Some(Io::Init(a));
-                            Err(e)
-                        }
-                    }
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
+            self.pool_on.spawn_fn(with!(actor_off => move || {
+                let user  = actor.profile(&user_id)?;
+                let actor = actor.offline(user, bcast_tx);
+                let me    = actor.me().clone();
+                *actor_off.lock().unwrap() = Some(actor);
+                Ok(me)
             }))
             .and_then(with!(this, app => move |me| {
                 this.show_info("Loading conversations ...");
@@ -708,22 +682,26 @@ impl Coax {
                 this.load_local_conversations(&app)
             }))
             .and_then(with!(this => move |()| {
-                this.pool_loc.spawn_fn(move || {
-                    let mut act = actor.lock().unwrap();
-                    Coax::ensure_online(&mut *act)?;
-                    if let Some(Io::Online(ref mut a)) = *act {
-                        let mut i = a.new_inbox()?;
+                this.pool_on.spawn_fn(move || {
+                    let mut actor_off_guard = actor_off.lock().unwrap();
+                    if let Some(ref mut actor1) = *actor_off_guard {
+                        let client     = actor1.connect()?;
+                        let mut actor2 = actor1.clone_online(client)?;
+                        actor2.renew_access()?;
+                        let mut i = actor2.new_inbox()?;
                         let     w = i.connect()?;
                         *inbox.lock().unwrap() = Some(i.fork(w));
-                        *sync.lock().unwrap() = Some(a.clone()?);
-                        let id = a.me().id.clone();
-                        a.resolve_user(&id, false)
+                        let id = actor2.me().id.clone();
+                        actor2.resolve_user(&id, false)?;
+                        *actor_on.lock().unwrap() = Some(actor2);
+                        Ok(())
                     } else {
                         Err(Error::Message("invalid app state"))
                     }
                 })
             }))
             .and_then(with!(this => move |_| {
+                this.complete.store(true, Ordering::Relaxed);
                 this.show_info("Synchronising ...");
                 this.notifications(true)
             }))
@@ -736,6 +714,7 @@ impl Coax {
                 this.resend_messages()
             }))
             .map_err(with!(app => move |e| {
+                this.hide_info();
                 error!(logger, "failed to activate profile"; "error" => format!("{}", e));
                 show_error(&app, &e, "Failed to activate profile", "")
             }));
@@ -1031,11 +1010,11 @@ impl Coax {
         }
 
         let this   = self.clone();
-        let actor  = self.actor.clone();
+        let actor  = self.actor_on.clone();
         let future =
-            self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                if let Some(Io::Online(ref mut a)) = *act {
+            self.pool_on.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
                     let n = Name::new(name);
                     match a.resolve_connection(&u)? {
                         Some(conn) =>
@@ -1079,11 +1058,11 @@ impl Coax {
         debug!(self.log, "on_connect_change"; "user" => uid.to_string());
         s.set_sensitive(false);
         let this   = self.clone();
-        let actor  = self.actor.clone();
+        let actor  = self.actor_on.clone();
         let future =
-            self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                if let Some(Io::Online(ref mut a)) = *act {
+            self.pool_on.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
                     a.update_connection(&uid, new)
                 } else {
                     Err(Error::Message("invalid app state"))
@@ -1093,7 +1072,7 @@ impl Coax {
                 if updated && new == ConnectStatus::Accepted {
                     boxed(this.conversation(&cid).map(move |conv| conv.map(|c| this.on_conversation(&app, c))))
                 } else {
-                    boxed(futures::finished(None))
+                    boxed(future::ok(None))
                 }
             }))
             .map(with!(s => move |_| {
@@ -1128,14 +1107,14 @@ impl Coax {
 
     fn save_as(&self, app: &gtk::Application, k: AssetKey<'static>, p: PathBuf) {
         trace!(self.log, "save as");
-        let actor  = self.actor.clone();
+        let actor  = self.actor_off.clone();
         let logger = self.log.clone();
-        let future = self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                match *act {
-                    Some(Io::Offline(ref mut a)) => a.save_asset_as(&k, &p),
-                    Some(Io::Online(ref mut a))  => a.save_asset_as(&k, &p),
-                    _                            => Err(Error::Message("invalid app state"))
+        let future = self.pool_off.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
+                    a.save_asset_as(&k, &p)
+                } else {
+                    Err(Error::Message("invalid app state"))
                 }
             })
             .map_err(with!(app => move |e| {
@@ -1150,82 +1129,104 @@ impl Coax {
     //
 
     fn set_image(&self, ast: coax_data::Asset<'static>, c: ConvId, m: String, img: gtk::DrawingArea) -> impl Future<Item=(), Error=Error> {
-        let this  = self.clone();
-        let actor = self.actor.clone();
-        self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                match *act {
-                    Some(Io::Online(ref mut a)) => {
-                        a.download_asset(&ast.id, ast.token.as_ref())?;
-                        if ast.status != AssetStatus::Local {
-                            a.decrypt_asset(&ast.id, &ast.cksum, &ast.key)?;
-                        }
-                        Ok(a.asset_path(&ast.id))
-                    }
-                    _ => Err(Error::Message("invalid app state"))
-                }
-            })
-            .map(with!(this => move |path| {
-                if let Some(ch) = this.channels.borrow().get(&c) {
-                    ch.get_msg(&m).map(|msg| if let Message::Image(ref m) = *msg { m.stop_spinner() });
-                }
-                let buf    = Pixbuf::new_from_file(path.to_string_lossy().as_ref()).unwrap(); // TODO
-                let width  = buf.get_width();
-                let height = buf.get_height();
-                let w      = img.get_allocated_width();
-                let h      = w * height / width;
-                img.set_size_request(-1, h);
-                img.connect_draw(move |img, ctx| {
-                    let w = img.get_allocated_width();
-                    let h = w * height / width;
-                    if w < width {
-                        img.set_size_request(-1, h);
-                        let b = buf.scale_simple(w, h, InterpType::Bilinear).unwrap(); // TODO
-                        ctx.set_source_pixbuf(&b, 0.0, 0.0);
+        let future =
+            if ast.status == AssetStatus::Local {
+                let aid   = ast.id.clone();
+                let actor = self.actor_off.clone();
+                self.pool_off.spawn_fn(move || {
+                    let mut actor_guard = actor.lock().unwrap();
+                    if let Some(ref mut a) = *actor_guard {
+                        Ok(a.asset_path(&aid))
                     } else {
-                        img.set_size_request(-1, height);
-                        ctx.set_source_pixbuf(&buf, 0.0, 0.0)
+                        Err(Error::Message("invalid app state"))
                     }
-                    ctx.paint();
-                    gtk::Inhibit(false)
-                });
-            }))
+                })
+            } else {
+                let actor = self.actor_on.clone();
+                self.pool_on.spawn_fn(move || {
+                        let mut actor_guard = actor.lock().unwrap();
+                        if let Some(ref mut a) = *actor_guard {
+                            a.download_asset(&ast.id, ast.token.as_ref())?;
+                            a.decrypt_asset(&ast.id, &ast.cksum, &ast.key)?;
+                            Ok(a.asset_path(&ast.id))
+                        } else {
+                            Err(Error::Message("invalid app state"))
+                        }
+                    })
+            };
+        let this = self.clone();
+        future.map(move |path| {
+            if let Some(ch) = this.channels.borrow().get(&c) {
+                ch.get_msg(&m).map(|msg| if let Message::Image(ref m) = *msg { m.stop_spinner() });
+            }
+            let buf    = Pixbuf::new_from_file(path.to_string_lossy().as_ref()).unwrap(); // TODO
+            let width  = buf.get_width();
+            let height = buf.get_height();
+            let w      = img.get_allocated_width();
+            let h      = w * height / width;
+            img.set_size_request(-1, h);
+            img.connect_draw(move |img, ctx| {
+                let w = img.get_allocated_width();
+                let h = w * height / width;
+                if w < width {
+                    img.set_size_request(-1, h);
+                    let b = buf.scale_simple(w, h, InterpType::Bilinear).unwrap(); // TODO
+                    ctx.set_source_pixbuf(&b, 0.0, 0.0);
+                } else {
+                    img.set_size_request(-1, height);
+                    ctx.set_source_pixbuf(&buf, 0.0, 0.0)
+                }
+                ctx.paint();
+                gtk::Inhibit(false)
+            });
+        })
     }
 
     fn set_user_icon(&self, u: UserId) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "set user icon"; "id" => u.to_string());
-        let this  = self.clone();
-        let actor = self.actor.clone();
-        self.pool_loc.spawn_fn(with!(u => move || {
-                let mut act = actor.lock().unwrap();
-                match *act {
-                    Some(Io::Online(ref mut a)) =>
+        let future =
+            if self.complete.load(Ordering::Relaxed) {
+                let actor = self.actor_on.clone();
+                self.pool_on.spawn_fn(with!(u => move || {
+                    let mut actor_guard = actor.lock().unwrap();
+                    if let Some(ref mut a) = *actor_guard {
                         if let Some(usr) = a.resolve_user(&u, true)? {
                             a.load_user_icon(&usr)
                         } else {
                             Ok(Vec::new())
-                        },
-                    Some(Io::Offline(ref mut a)) =>
+                        }
+                    } else {
+                        Err(Error::Message("invalid app state"))
+                    }
+                }))
+            } else {
+                let actor = self.actor_off.clone();
+                self.pool_on.spawn_fn(with!(u => move || {
+                    let mut actor_guard = actor.lock().unwrap();
+                    if let Some(ref mut a) = *actor_guard {
                         if let Some(usr) = a.load_user(&u)? {
                             a.load_user_icon(&usr)
                         } else {
                             Ok(Vec::new())
-                        },
-                    _ => Err(Error::Message("invalid app state"))
-                }
-            }))
-            .map(move |data| {
-                if data.is_empty() {
-                    info!(this.log, "no user icon"; "user" => u.to_string());
-                    return ()
-                }
-                let mut res = this.res.borrow_mut();
-                if let Some(ref mut user) = res.user_mut(&u) {
-                    user.set_icon(&data)
-                } else {
-                    warn!(this.log, "no user resources"; "user" => u.to_string())
-                }
-            })
+                        }
+                    } else {
+                        Err(Error::Message("invalid app state"))
+                    }
+                }))
+            };
+        let this = self.clone();
+        future.map(move |data| {
+            if data.is_empty() {
+                info!(this.log, "no user icon"; "user" => u.to_string());
+                return ()
+            }
+            let mut res = this.res.borrow_mut();
+            if let Some(ref mut user) = res.user_mut(&u) {
+                user.set_icon(&data)
+            } else {
+                warn!(this.log, "no user resources"; "user" => u.to_string())
+            }
+        })
     }
 
     fn send_confirmation(&self, c: &ConvId, id: &str) -> impl Future<Item=(), Error=Error> {
@@ -1243,7 +1244,7 @@ impl Coax {
         let this = self.clone();
         let mid  = String::from(msg.get_message_id());
         let text = String::from(msg.get_text().get_content());
-        futures::lazy(with!(this, id, mid => move || {
+        future::lazy(with!(this, id, mid => move || {
                 if let Some(mut ch) = this.channels.borrow_mut().get_mut(&id) {
                     this.ensure_user_res(&*this.me.borrow());
                     let mut res = this.res.borrow_mut();
@@ -1254,7 +1255,7 @@ impl Coax {
                         ch.push_msg(&mid, Message::Text(msg))
                     }
                 }
-                futures::finished(())
+                future::ok(())
             }))
             .and_then(with!(this, id => move |()| {
                 this.prepare_message(&id, msg, Delivery::Persistent)
@@ -1294,15 +1295,15 @@ impl Coax {
 
     fn load_local_conversations(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         let this   = self.clone();
-        let actor  = self.actor.clone();
+        let actor  = self.actor_off.clone();
         let pstate = self.ch_state.borrow().clone();
         debug!(self.log, "load conversations"; "paging_state" => format!("{:?}", pstate));
-        self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                match *act {
-                    Some(Io::Online(ref mut a))  => a.load_conversations(pstate, 64),
-                    Some(Io::Offline(ref mut a)) => a.load_conversations(pstate, 64),
-                    _                            => Err(Error::Message("invalid app state"))
+        self.pool_off.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
+                    a.load_conversations(pstate, 64)
+                } else {
+                    Err(Error::Message("invalid app state"))
                 }
             })
             .map(with!(app => move |page| {
@@ -1316,10 +1317,10 @@ impl Coax {
     fn load_remote_conversations(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "load remote conversations");
         let this = self.clone();
-        let sync = self.sync.clone();
-        self.pool_rem.spawn_fn(move || {
-                let mut act = sync.lock().unwrap();
-                if let Some(ref mut a) = *act {
+        let actor= self.actor_on.clone();
+        self.pool_on.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
                     a.resolve_conversations()
                 } else {
                     Err(Error::Message("invalid app state"))
@@ -1332,16 +1333,16 @@ impl Coax {
 
     fn load_messages(&self, app: &gtk::Application, cid: &ConvId) -> impl Future<Item=(), Error=Error> {
         let this    = self.clone();
-        let actor   = self.actor.clone();
+        let actor   = self.actor_off.clone();
         let conv_id = cid.clone();
         let pstate  = self.channels.borrow().get(&cid).and_then(|ch| ch.paging_state().cloned());
         debug!(self.log, "load conversation messages"; "id" => cid.to_string(), "paging_state" => format!("{:?}", pstate));
-        self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                match *act {
-                    Some(Io::Online(ref mut a))  => a.load_messages(&conv_id, pstate, 32),
-                    Some(Io::Offline(ref mut a)) => a.load_messages(&conv_id, pstate, 32),
-                    _                            => Err(Error::Message("invalid app state"))
+        self.pool_off.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
+                    a.load_messages(&conv_id, pstate, 32)
+                } else {
+                    Err(Error::Message("invalid app state"))
                 }
             })
             .map(with!(this, cid, app => move |mm| {
@@ -1399,13 +1400,13 @@ impl Coax {
     fn load_local_contacts(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         trace!(self.log, "load contacts");
         let this  = self.clone();
-        let actor = self.actor.clone();
-        self.pool_loc.spawn_fn(move || {
-                let mut act = actor.lock().unwrap();
-                match *act {
-                    Some(Io::Online(ref mut a))  => a.load_contacts(),
-                    Some(Io::Offline(ref mut a)) => a.load_contacts(),
-                    _                            => Err(Error::Message("invalid app state"))
+        let actor = self.actor_off.clone();
+        self.pool_off.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
+                    a.load_contacts()
+                } else {
+                    Err(Error::Message("invalid app state"))
                 }
             })
             .map(with!(app => move |cc| {
@@ -1419,11 +1420,11 @@ impl Coax {
 
     fn load_remote_contacts(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "load remote contacts");
-        let this = self.clone();
-        let sync = self.sync.clone();
-        self.pool_rem.spawn_fn(move || {
-                let mut act = sync.lock().unwrap();
-                if let Some(ref mut a) = *act {
+        let this  = self.clone();
+        let actor = self.actor_on.clone();
+        self.pool_on.spawn_fn(move || {
+                let mut actor_guard = actor.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
                     a.resolve_user_connections()
                 } else {
                     Err(Error::Message("invalid app state"))
@@ -1436,51 +1437,38 @@ impl Coax {
 
     fn prepare_message(&self, id: &ConvId, msg: GenericMessage, del: Delivery) -> impl Future<Item=(GenericMessage, send::Params), Error=Error> {
         debug!(self.log, "prepare message future"; "conv" => id.to_string(), "id" => msg.get_message_id());
-        let actor = self.actor.clone();
-        self.pool_loc.spawn_fn(with!(id => move || {
-            let mut act = actor.lock().unwrap();
-            match *act {
-                Some(Io::Offline(ref mut a)) if del != Delivery::OneShot => {
+        let actor = self.actor_off.clone();
+        self.pool_off.spawn_fn(with!(id => move || {
+            let mut actor_guard = actor.lock().unwrap();
+            if let Some(ref mut a) = *actor_guard {
+                if del != Delivery::OneShot {
                     a.store_message(&id, &msg)?;
-                    let p = a.prepare_message(&id, &msg)?;
-                    a.enqueue(msg.get_message_id().as_bytes(), &p, &msg)?;
-                    Ok((msg, p))
                 }
-                Some(Io::Online(ref mut a)) if del == Delivery::OneShot => {
-                    let p = a.prepare_message(&id, &msg)?;
-                    Ok((msg, p))
-                }
-                Some(Io::Online(ref mut a)) => {
-                    a.store_message(&id, &msg)?;
-                    let p = a.prepare_message(&id, &msg)?;
-                    a.enqueue(msg.get_message_id().as_bytes(), &p, &msg)?;
-                    Ok((msg, p))
-                }
-                _ => Err(Error::Message("invalid app state"))
+                let p = a.prepare_message(&id, &msg)?;
+                a.enqueue(msg.get_message_id().as_bytes(), &p, &msg)?;
+                Ok((msg, p))
+            } else {
+                Err(Error::Message("invalid app state"))
             }
         }))
     }
 
     fn send(&self, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<UTC>, Error=Error> {
         debug!(self.log, "send future"; "conv" => params.conv.to_string(), "id" => msg.get_message_id());
-        let sync   = self.sync.clone();
+        let actor  = self.actor_on.clone();
         let logger = self.log.clone();
-        self.pool_rem.spawn_fn(move || {
+        self.pool_on.spawn_fn(move || {
             loop {
                 {
-                    let mut act = sync.lock().unwrap();
-                    if let Some(ref mut a) = *act {
+                    let mut actor_guard = actor.lock().unwrap();
+                    if let Some(ref mut a) = *actor_guard {
                         match a.send_message(&mut params, &msg, del) {
                             Ok(dt) => {
-                                if del != Delivery::OneShot {
-                                    a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?
-                                }
+                                a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?;
                                 return Ok(dt)
                             }
                             Err(e@Error::MsgSend(ClientError::Error(send::Error::NotFound))) => {
-                                if del != Delivery::OneShot {
-                                    a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?
-                                }
+                                a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?;
                                 return Err(e)
                             }
                             Err(e) =>
@@ -1497,10 +1485,10 @@ impl Coax {
 
     fn resend_messages(&self) -> impl Future<Item=(), Error=Error> {
         trace!(self.log, "re-send messages future");
-        let sync = self.sync.clone();
-        self.pool_rem.spawn_fn(move || {
-            let mut act = sync.lock().unwrap();
-            if let Some(ref mut a) = *act {
+        let actor = self.actor_on.clone();
+        self.pool_on.spawn_fn(move || {
+            let mut actor_guard = actor.lock().unwrap();
+            if let Some(ref mut a) = *actor_guard {
                 a.resend()
             } else {
                 Err(Error::Message("invalid app state"))
@@ -1510,10 +1498,10 @@ impl Coax {
 
     fn conversation(&self, id: &ConvId) -> impl Future<Item=Option<Conversation<'static>>, Error=Error> {
         trace!(self.log, "load conversation future");
-        let actor = self.actor.clone();
-        self.pool_loc.spawn_fn(with!(id => move || {
-            let mut act = actor.lock().unwrap();
-            if let Some(Io::Online(ref mut a)) = *act {
+        let actor = self.actor_on.clone();
+        self.pool_on.spawn_fn(with!(id => move || {
+            let mut actor_guard = actor.lock().unwrap();
+            if let Some(ref mut a) = *actor_guard {
                 a.resolve_conversation(&id)
             } else {
                 Err(Error::Message("invalid app state"))
@@ -1523,25 +1511,37 @@ impl Coax {
 
     fn user(&self, id: UserId, allow_local: bool) -> impl Future<Item=Option<User<'static>>, Error=Error> {
         trace!(self.log, "user future");
-        let actor = self.actor.clone();
-        self.pool_loc.spawn_fn(move || {
-            let mut act = actor.lock().unwrap();
-            match *act {
-                Some(Io::Offline(ref mut a)) if allow_local => a.load_user(&id),
-                Some(Io::Online(ref mut a))                 => a.resolve_user(&id, allow_local),
-                _                                           => Err(Error::Message("invalid app state"))
-            }
-        })
+        if allow_local {
+            let actor_off = self.actor_off.clone();
+            self.pool_off.spawn_fn(move || {
+                let mut actor_guard = actor_off.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
+                    a.load_user(&id)
+                } else {
+                    Err(Error::Message("invalid app state"))
+                }
+            })
+        } else {
+            let actor_on = self.actor_on.clone();
+            self.pool_on.spawn_fn(move || {
+                let mut actor_guard = actor_on.lock().unwrap();
+                if let Some(ref mut a) = *actor_guard {
+                    a.resolve_user(&id, false)
+                } else {
+                    Err(Error::Message("invalid app state"))
+                }
+            })
+        }
     }
 
     fn notifications(&self, initial: bool) -> impl Future<Item=(), Error=Error> {
         trace!(self.log, "notifications future");
-        let sync    = self.sync.clone();
+        let actor   = self.actor_on.clone();
         let is_sync = self.is_sync.clone();
         let logger  = self.log.clone();
-        self.pool_rem.spawn_fn(move || {
-            let mut actor = sync.lock().unwrap();
-            if let Some(ref mut a) = *actor {
+        self.pool_on.spawn_fn(move || {
+            let mut actor_guard = actor.lock().unwrap();
+            if let Some(ref mut a) = *actor_guard {
                 is_sync.store(true, Ordering::Relaxed);
                 loop {
                     debug!(logger, "actor getting notifications");
@@ -1591,68 +1591,6 @@ impl Coax {
 
         window.set_transient_for(app.get_active_window().as_ref());
         window.show_all();
-    }
-
-    // Ensure actor is in `Online` state.
-    fn ensure_online(actor: &mut Option<Io>) -> Result<(), Error> {
-        match actor.take() {
-            Some(Io::Offline(a)) =>
-                match a.connect() {
-                    Ok(c) => {
-                        let mut a2 = a.online(c);
-                        if let Err(e) = a2.renew_access() {
-                            *actor = Some(Io::Offline(a2.offline()));
-                            Err(e)
-                        } else {
-                            *actor = Some(Io::Online(a2));
-                            Ok(())
-                        }
-                    }
-                    Err(e) => {
-                        *actor = Some(Io::Offline(a));
-                        Err(e)
-                    }
-                },
-            Some(Io::Online(a)) => {
-                *actor = Some(Io::Online(a));
-                Ok(())
-            }
-            None  => Err(Error::Message("no actor")),
-            other => {
-                *actor = other;
-                Err(Error::Message("impossible actor transition"))
-            }
-        }
-    }
-
-    // Ensure actor is in `Connected` state.
-    fn ensure_connected(actor: &mut Option<Io>) -> Result<(), Error> {
-        match actor.take() {
-            Some(Io::Init(a)) =>
-                match a.connect() {
-                    Ok(c) => {
-                        *actor = Some(Io::Connected(a.connected(c)));
-                        Ok(())
-                    }
-                    Err(e) => {
-                        *actor = Some(Io::Init(a));
-                        Err(e)
-                    }
-                },
-            Some(Io::Connected(a)) => {
-                *actor = Some(Io::Connected(a));
-                Ok(())
-            }
-            Some(Io::Offline(a)) => {
-                *actor = Some(Io::Init(a.init()));
-                Coax::ensure_connected(actor)
-            }
-            Some(Io::Online(a)) => {
-                *actor = Some(Io::Init(a.init()));
-                Coax::ensure_connected(actor)
-            }
-            None => Err(Error::Message("no actor"))
-        }
     }
 
     fn ensure_user_res(&self, u: &User) {

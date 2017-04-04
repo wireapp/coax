@@ -28,7 +28,7 @@ coax-net           = { path = "../coax-net" }
 cookie             = ">= 0.6.1"
 cryptobox          = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 fnv                = ">= 1.0"
-futures            = ">= 0.1"
+futures            = { version = ">= 0.1", features = ["use_std"] }
 futures-cpupool    = ">= 0.1"
 gdk                = { git = "https://github.com/gtk-rs/gdk" }
 gdk-pixbuf         = { git = "https://github.com/gtk-rs/gdk-pixbuf" }

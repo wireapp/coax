@@ -102,13 +102,13 @@ pub enum Delivery {
 
 impl Actor<Init> {
     /// Create a new `Actor` value.
-    pub fn new(g: &Logger, cfg: config::Main, tls: Arc<Tls>) -> Result<Actor<Init>, Error> {
-        Ok(Actor {
+    pub fn new(g: &Logger, cfg: config::Main, tls: Arc<Tls>) -> Actor<Init> {
+        Actor {
             logger: g.new(o!("context" => "Actor")),
             config: cfg,
             tls:    tls,
             state:  Init(())
-        })
+        }
     }
 
     /// Transition to `Connected` state.
@@ -384,6 +384,29 @@ impl Actor<Offline> {
         }
     }
 
+    /// Create `online` clone.
+    pub fn clone_online(&self, c: Client<'static>) -> Result<Actor<Online>, Error> {
+        debug!(self.logger, "Offline -> Online (cloned)");
+        let self_id = self.me().id.clone();
+        let dbase   = self.open_database(&self_id)?;
+        Ok(Actor {
+            logger: self.logger.clone(),
+            config: self.config.clone(),
+            tls:    self.tls.clone(),
+            state:  Online {
+                user: UserData {
+                    user:   self.state.user.user.clone(),
+                    dbase:  dbase,
+                    creds:  self.state.user.creds.clone(),
+                    device: self.state.user.device.clone(),
+                    assets: self.state.user.assets.clone()
+                },
+                client: c,
+                bcast:  self.state.bcast.clone()
+            }
+        })
+    }
+
     /// Our own user information.
     pub fn me(&self) -> &User<'static> {
         &self.state.user.user
@@ -412,6 +435,10 @@ impl Actor<Offline> {
     pub fn load_user<'a>(&mut self, id: &UserId) -> Result<Option<User<'a>>, Error> {
         debug!(self.logger, "loading user"; "id" => id.to_string());
         self.state.user.dbase.user(id).map_err(Error::Database)
+    }
+
+    pub fn asset_path(&mut self, k: &AssetKey) -> PathBuf {
+        self.state.user.assets.join(k.as_str())
     }
 
     pub fn load_user_icon(&mut self, u: &User) -> Result<Vec<u8>, Error> {
@@ -517,6 +544,28 @@ impl Actor<Online> {
                 bcast: self.state.bcast
             }
         }
+    }
+
+    /// Create `offline` clone.
+    pub fn clone_offline(&self) -> Result<Actor<Offline>, Error> {
+        debug!(self.logger, "Online -> Offline (cloned)");
+        let self_id = self.me().id.clone();
+        let dbase   = self.open_database(&self_id)?;
+        Ok(Actor {
+            logger: self.logger.clone(),
+            config: self.config.clone(),
+            tls:    self.tls.clone(),
+            state:  Offline {
+                user: UserData {
+                    user:   self.state.user.user.clone(),
+                    dbase:  dbase,
+                    creds:  self.state.user.creds.clone(),
+                    device: self.state.user.device.clone(),
+                    assets: self.state.user.assets.clone()
+                },
+                bcast: self.state.bcast.clone()
+            }
+        })
     }
 
     /// Our own user information.

@@ -1,7 +1,5 @@
 use std;
 use std::cell::RefCell;
-use std::collections::HashMap;
-use std::collections::hash_map::Entry;
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -11,6 +9,7 @@ use std::sync::mpsc::{channel, Sender};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+use chashmap::CHashMap;
 use channel::{Channel, Message, TextMessage, Image};
 use chrono::{DateTime, Local, UTC};
 use coax_actor::{Actor, Error, Pkg, Delivery};
@@ -67,11 +66,11 @@ pub struct Coax {
     convlist:  gtk::ListBox,
     send_btn:  gtk::Button,
     timezone:  Local,
-    channels:  Rc<RefCell<HashMap<ConvId, Channel>>>,
-    contacts:  Rc<RefCell<Contacts>>,
+    channels:  Rc<CHashMap<ConvId, Channel>>,
+    contacts:  Rc<Contacts>,
     me:        Rc<RefCell<User<'static>>>,
     me_box:    Rc<RefCell<gtk::Popover>>,
-    res:       Rc<RefCell<res::Resources>>,
+    res:       Rc<res::Resources>,
     ch_state:  Rc<RefCell<Option<PagingState<C>>>>
 }
 
@@ -144,11 +143,11 @@ impl Coax {
             convlist:  convlist,
             send_btn:  sendbtn,
             timezone:  Local::now().timezone(),
-            contacts:  Rc::new(RefCell::new(Contacts::new())),
-            channels:  Rc::new(RefCell::new(HashMap::new())),
+            contacts:  Rc::new(Contacts::new()),
+            channels:  Rc::new(CHashMap::new()),
             me:        Rc::new(RefCell::new(usr)),
             me_box:    Rc::new(RefCell::new(gtk::Popover::new(None : Option<&gtk::Label>))),
-            res:       Rc::new(RefCell::new(res::Resources::new())),
+            res:       Rc::new(res::Resources::new()),
             ch_state:  Rc::new(RefCell::new(None))
         };
 
@@ -187,7 +186,7 @@ impl Coax {
 
         let show_contacts: gtk::ToolButton = self.builder.get_object("show-cons-button").unwrap();
         show_contacts.connect_clicked(with!(this, app => move |_| {
-            if !this.contacts.borrow().is_init() {
+            if !this.contacts.is_init() {
                 let f =
                     this.load_local_contacts(&app)
                         .map_err(with!(this, app => move |e| {
@@ -200,11 +199,11 @@ impl Coax {
             this.convlist.unselect_all();
             this.mainview.remove_row(0);
             this.mainview.insert_row(0);
-            this.mainview.attach(this.contacts.borrow().contact_view(), 0, 0, 1, 1);
+            this.mainview.attach(this.contacts.contact_view(), 0, 0, 1, 1);
             this.mainview.show_all()
         }));
 
-        self.contacts.borrow().set_refresh_action(with!(this, app => move |btn| {
+        self.contacts.set_refresh_action(with!(this, app => move |btn| {
             let future =
                 this.load_remote_contacts(&app)
                     .and_then(with!(this, app => move |()| this.load_remote_conversations(&app)))
@@ -224,9 +223,7 @@ impl Coax {
         let profile_menu: gtk::MenuButton = header_builder.get_object("profile-menu").unwrap();
         profile_menu.set_sensitive(false);
 
-        {
-            *self.me_box.borrow_mut() = header_builder.get_object("profile-popover").unwrap()
-        }
+        *self.me_box.borrow_mut() = header_builder.get_object("profile-popover").unwrap();
 
         let menu_builder = Builder::new_from_string(include_str!("gtk/button-menu.ui"));
         let model: MenuModel = menu_builder.get_object("button-menu").unwrap();
@@ -324,7 +321,7 @@ impl Coax {
         self.convlist.connect_row_selected(with!(this, app, input => move |_, row| {
             if let Some(r) = row.as_ref() {
                 ffi::get_data(r, &ffi::KEY_ID).map(|id| {
-                    if let Some(ch) = this.channels.borrow().get(id) {
+                    if let Some(ch) = this.channels.get(id) {
                         if !ch.is_init() {
                             this.on_message_demand(&app, &id)
                         }
@@ -336,7 +333,7 @@ impl Coax {
                         let value = input.get_buffer()
                             .map(|buf| buf.get_char_count() > 0)
                             .unwrap_or(false);
-                        this.send_btn.set_sensitive(value && ch.status() == ConvStatus::Current);
+                        this.send_btn.set_sensitive(value && ch.is_current());
                     } else {
                         this.send_btn.set_sensitive(false)
                     }
@@ -349,16 +346,16 @@ impl Coax {
         let button = self.send_btn.clone();
 
         input.get_buffer().map(|buf| buf.connect_changed(with!(button, this => move |buf| {
-            let status =
+            let is_current =
                 if let Some(row) = this.convlist.get_selected_row() {
                     ffi::get_data(&row, &ffi::KEY_ID)
                         .and_then(|id| {
-                            this.channels.borrow().get(id).map(Channel::status)
+                            this.channels.get(id).map(|chan| chan.is_current())
                         })
                 } else {
                     None
                 };
-            let value = status == Some(ConvStatus::Current) && buf.get_char_count() > 0;
+            let value = is_current == Some(true) && buf.get_char_count() > 0;
             button.set_sensitive(value)
         })));
 
@@ -596,8 +593,7 @@ impl Coax {
                 this.show_info("Loading conversations ...");
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
-                let mut res = this.res.borrow_mut();
-                let prof = ProfileView::new(res.user_mut(&me.id).unwrap());
+                let prof = ProfileView::new(&mut this.res.user_mut(&me.id).unwrap());
                 this.me_box.borrow().add(prof.vbox());
                 *this.me.borrow_mut() = me;
                 disable.set_enabled(false);
@@ -665,8 +661,7 @@ impl Coax {
                 this.show_info("Loading conversations ...");
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
-                let mut res = this.res.borrow_mut();
-                let prof = ProfileView::new(res.user_mut(&me.id).unwrap());
+                let prof = ProfileView::new(&mut this.res.user_mut(&me.id).unwrap());
                 this.me_box.borrow().add(prof.vbox());
                 *this.me.borrow_mut() = me;
                 disable.set_enabled(false);
@@ -751,12 +746,11 @@ impl Coax {
         debug!(self.log, "on_message"; "conv" => m.conv.to_string(), "id" => m.id);
         let this   = self.clone();
         let logger = self.log.clone();
-        if let Some(mut ch) = self.channels.borrow_mut().get_mut(&m.conv) {
+        if let Some(ch) = self.channels.get(&m.conv) {
             if !ch.has_msg(&m.id) {
                 self.ensure_user_res(&m.user);
                 let mtime   = m.time.with_timezone(&self.timezone);
-                let mut res = self.res.borrow_mut();
-                let mut usr = res.user_mut(&m.user.id).unwrap();
+                let mut usr = self.res.user_mut(&m.user.id).unwrap();
                 self.show_notification(app, &usr, &m);
                 if ch.is_init() {
                     match m.data {
@@ -817,12 +811,14 @@ impl Coax {
 
     fn on_message_update(&self, app: &gtk::Application, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
         debug!(self.log, "on_message_update"; "conv" => c.to_string(), "id" => id);
-        if let Some(mut ch) = self.channels.borrow_mut().get_mut(&c) {
-            if let Some(&mut Message::Text(ref mut msg)) = ch.get_msg_mut(&id) {
-                match s {
-                    MessageStatus::Sent      => msg.set_time(t.with_timezone(&self.timezone)),
-                    MessageStatus::Delivered => msg.set_delivered(t.with_timezone(&self.timezone)),
-                    _                        => {}
+        if let Some(ch) = self.channels.get(&c) {
+            if let Some(mut m) = ch.get_msg_mut(&id) {
+                if let Message::Text(ref mut msg) = *m {
+                    match s {
+                        MessageStatus::Sent      => msg.set_time(t.with_timezone(&self.timezone)),
+                        MessageStatus::Delivered => msg.set_delivered(t.with_timezone(&self.timezone)),
+                        _                        => {}
+                    }
                 }
             }
         } else {
@@ -848,7 +844,7 @@ impl Coax {
 
     fn on_conversation(&self, app: &gtk::Application, mut conv: Conversation<'static>) {
         debug!(self.log, "on_conversation"; "conv" => conv.id.to_string());
-        if self.channels.borrow().contains_key(&conv.id) {
+        if self.channels.contains_key(&conv.id) {
             debug!(self.log, "conversation already loaded"; "conv" => conv.id.to_string());
             return ()
         }
@@ -862,13 +858,13 @@ impl Coax {
         let cid  = conv.id.clone();
 
         if conv.ctype == ConvType::Group {
-            let mut ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
-            ch.set_status(conv.status);
+            let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
+            ch.set_current(conv.status == ConvStatus::Current);
             ch.signal_at_top().connect(with!(app, cid => move |_| {
                 this.on_message_demand(&app, &cid)
             }));
             self.convlist.add(ch.channel_row());
-            self.channels.borrow_mut().insert(conv.id, ch);
+            self.channels.insert(conv.id, ch);
             self.convlist.show_all();
             return ()
         }
@@ -876,16 +872,15 @@ impl Coax {
         // Set remote user name as conversation name if user is already in `self.res`.
         let me = self.me.borrow();
         if let Some(uid) = conv.members.iter().filter(|m| **m != me.id).next().cloned() {
-            let mut res = self.res.borrow_mut();
-            if let Some(mut u) = res.user_mut(&uid) {
+            if let Some(mut u) = self.res.user_mut(&uid) {
                 conv.set_name(Name::new(u.name.clone()));
-                let mut ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
-                ch.set_status(conv.status);
+                let ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
+                ch.set_current(conv.status == ConvStatus::Current);
                 ch.signal_at_top().connect(with!(app, cid => move |_| {
                     this.on_message_demand(&app, &cid)
                 }));
                 self.convlist.add(ch.channel_row());
-                self.channels.borrow_mut().insert(conv.id, ch);
+                self.channels.insert(conv.id, ch);
                 self.convlist.show_all();
                 return ()
             }
@@ -903,17 +898,16 @@ impl Coax {
         let future = self.user(user_id.clone(), true)
             .map(with!(this, app => move |u| {
                 if let Some(user) = u {
-                    if !this.channels.borrow().contains_key(&conv.id) {
+                    if !this.channels.contains_key(&conv.id) {
                         this.ensure_user_res(&user);
-                        let mut res = this.res.borrow_mut();
-                        let mut usr = res.user_mut(&user.id).unwrap();
-                        let mut chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
-                        chn.set_status(conv.status);
+                        let mut usr = this.res.user_mut(&user.id).unwrap();
+                        let chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
+                        chn.set_current(conv.status == ConvStatus::Current);
                         chn.signal_at_top().connect(with!(this, app, cid => move |_| {
                             this.on_message_demand(&app, &cid)
                         }));
                         this.convlist.add(chn.channel_row());
-                        this.channels.borrow_mut().insert(conv.id, chn);
+                        this.channels.insert(conv.id, chn);
                         this.convlist.show_all()
                     }
                 } else {
@@ -931,10 +925,8 @@ impl Coax {
     fn on_contact(&self, app: &gtk::Application, to: User<'static>, contact: Connection) {
         debug!(self.log, "on_contact"; "to" => to.id.to_string());
         self.ensure_user_res(&to);
-        let mut r = self.res.borrow_mut();
-        let mut u = r.user_mut(&to.id).unwrap();
-        let mut c = self.contacts.borrow_mut();
-        if let Some(mut cont) = c.get_mut(&to.id) {
+        let mut u = self.res.user_mut(&to.id).unwrap();
+        if let Some(mut cont) = self.contacts.get_mut(&to.id) {
             cont.block_handler(true);
             cont.set_status(contact.status);
             cont.block_handler(false);
@@ -943,59 +935,56 @@ impl Coax {
         let this = self.clone();
         let uid  = to.id.clone();
         let cid  = contact.conv.clone();
-        c.add(&mut u, &contact, with!(app => move |w, s| {
+        self.contacts.add(&mut u, &contact, with!(app => move |w, s| {
             this.on_connect_change(&app, w, uid.clone(), cid.clone(), s)
         }));
     }
 
     fn on_members_change(&self, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
         debug!(self.log, "on_members_change"; "conv" => cid.to_string());
-        match self.channels.borrow_mut().entry(cid.clone()) {
-            Entry::Vacant(_) => {
-                let this   = self.clone();
-                let future = self.conversation(&cid)
-                    .map(with!(this, app => move |conv| {
-                        if let Some(c) = conv {
-                            this.on_conversation(&app, c);
-                            this.on_members_change(&app, dt, cid, members, s, from)
-                        } else {
-                            error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
-                        }
-                    }))
-                    .map_err(with!(this => move |e| {
-                        error!(this.log, "on_members_change error"; "error" => format!("{}", e))
-                    }));
-                self.futures.send(boxed(future)).unwrap()
-            }
-            Entry::Occupied(mut e) => {
-                let local = dt.with_timezone(&self.timezone);
-                for m in members {
-                    if m.id == self.me.borrow().id {
-                        e.get_mut().set_status(s)
-                    }
-                    if e.get().is_init() {
-                        let txt = match s {
-                            ConvStatus::Current =>
-                                if m.id == from.id {
-                                    format!("{} has joined this conversation.", m.name.as_str())
-                                } else {
-                                    format!("{} has added {} to this conversation.", from.name.as_str(), m.name.as_str())
-                                },
-                            ConvStatus::Previous =>
-                                if m.id == from.id {
-                                    format!("{} has left this conversation.", m.name.as_str())
-                                } else {
-                                    format!("{} has removed {} from this conversation.", from.name.as_str(), m.name.as_str())
-                                }
-                        };
-                        let mid = random_uuid().to_string();
-                        e.get_mut().push_msg(&mid, Message::system(local, &txt));
-                        if !e.get().is_selected() {
-                            e.get().set_unread()
-                        }
+        if let Some(chan) = self.channels.get(&cid) {
+            let local = dt.with_timezone(&self.timezone);
+            for m in members {
+                if m.id == self.me.borrow().id {
+                    chan.set_current(s == ConvStatus::Current)
+                }
+                if chan.is_init() {
+                    let txt = match s {
+                        ConvStatus::Current =>
+                            if m.id == from.id {
+                                format!("{} has joined this conversation.", m.name.as_str())
+                            } else {
+                                format!("{} has added {} to this conversation.", from.name.as_str(), m.name.as_str())
+                            },
+                        ConvStatus::Previous =>
+                            if m.id == from.id {
+                                format!("{} has left this conversation.", m.name.as_str())
+                            } else {
+                                format!("{} has removed {} from this conversation.", from.name.as_str(), m.name.as_str())
+                            }
+                    };
+                    let mid = random_uuid().to_string();
+                    chan.push_msg(&mid, Message::system(local, &txt));
+                    if !chan.is_selected() {
+                        chan.set_unread()
                     }
                 }
             }
+        } else {
+            let this   = self.clone();
+            let future = self.conversation(&cid)
+                .map(with!(this, app => move |conv| {
+                    if let Some(c) = conv {
+                        this.on_conversation(&app, c);
+                        this.on_members_change(&app, dt, cid, members, s, from)
+                    } else {
+                        error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
+                    }
+                }))
+                .map_err(with!(this => move |e| {
+                    error!(this.log, "on_members_change error"; "error" => format!("{}", e))
+                }));
+            self.futures.send(boxed(future)).unwrap()
         }
     }
 
@@ -1156,7 +1145,7 @@ impl Coax {
             };
         let this = self.clone();
         future.map(move |path| {
-            if let Some(ch) = this.channels.borrow().get(&c) {
+            if let Some(ch) = this.channels.get(&c) {
                 ch.get_msg(&m).map(|msg| if let Message::Image(ref m) = *msg { m.stop_spinner() });
             }
             let buf    = Pixbuf::new_from_file(path.to_string_lossy().as_ref()).unwrap(); // TODO
@@ -1220,12 +1209,11 @@ impl Coax {
                 info!(this.log, "no user icon"; "user" => u.to_string());
                 return ()
             }
-            let mut res = this.res.borrow_mut();
-            if let Some(ref mut user) = res.user_mut(&u) {
+            if let Some(mut user) = this.res.user_mut(&u) {
                 user.set_icon(&data)
             } else {
                 warn!(this.log, "no user resources"; "user" => u.to_string())
-            }
+            };
         })
     }
 
@@ -1245,10 +1233,9 @@ impl Coax {
         let mid  = String::from(msg.get_message_id());
         let text = String::from(msg.get_text().get_content());
         future::lazy(with!(this, id, mid => move || {
-                if let Some(mut ch) = this.channels.borrow_mut().get_mut(&id) {
+                if let Some(ch) = this.channels.get(&id) {
                     this.ensure_user_res(&*this.me.borrow());
-                    let mut res = this.res.borrow_mut();
-                    let mut usr = res.user_mut(&this.me.borrow().id).unwrap();
+                    let mut usr = this.res.user_mut(&this.me.borrow().id).unwrap();
                     if !ch.has_msg(&mid) {
                         let msg = TextMessage::new(None, &mut usr, &text);
                         msg.start_spinner();
@@ -1264,14 +1251,17 @@ impl Coax {
                 this.send(params, msg, Delivery::Persistent)
             }))
             .map(with!(this, id, mid => move |dt| {
-                let mut channels = this.channels.borrow_mut();
-                if let Some(mut ch) = channels.get_mut(&id) {
+                if let Some(ch) = this.channels.get(&id) {
                     let loc_time   = dt.with_timezone(&this.timezone);
                     let is_message =
-                        if let Some(&mut Message::Text(ref mut msg)) = ch.get_msg_mut(&mid) {
-                            msg.stop_spinner();
-                            msg.set_time(loc_time.clone());
-                            true
+                        if let Some(mut m) = ch.get_msg_mut(&mid) {
+                            if let Message::Text(ref mut msg) = *m {
+                                msg.stop_spinner();
+                                msg.set_time(loc_time.clone());
+                                true
+                            } else {
+                                false
+                            }
                         } else {
                             false
                         };
@@ -1280,13 +1270,14 @@ impl Coax {
                         ch.update_time(&loc_time);
                         this.convlist.invalidate_sort()
                     }
-                }
+                };
             }))
             .map_err(with!(this, id, mid => move |e| {
-                let channels = this.channels.borrow();
-                if let Some(ch) = channels.get(&id) {
-                    if let Some(&Message::Text(ref msg)) = ch.get_msg(&mid) {
-                        msg.set_error()
+                if let Some(ch) = this.channels.get(&id) {
+                    if let Some(m) = ch.get_msg(&mid) {
+                        if let Message::Text(ref msg) = *m {
+                            msg.set_error()
+                        }
                     }
                 }
                 e
@@ -1335,7 +1326,7 @@ impl Coax {
         let this    = self.clone();
         let actor   = self.actor_off.clone();
         let conv_id = cid.clone();
-        let pstate  = self.channels.borrow().get(&cid).and_then(|ch| ch.paging_state().cloned());
+        let pstate  = self.channels.get(&cid).and_then(|ch| ch.paging_state());
         debug!(self.log, "load conversation messages"; "id" => cid.to_string(), "paging_state" => format!("{:?}", pstate));
         self.pool_off.spawn_fn(move || {
                 let mut actor_guard = actor.lock().unwrap();
@@ -1346,15 +1337,14 @@ impl Coax {
                 }
             })
             .map(with!(this, cid, app => move |mm| {
-                if let Some(mut chan) = this.channels.borrow_mut().get_mut(&cid) {
+                if let Some(chan) = this.channels.get(&cid) {
                     for m in mm.data {
                         if chan.has_msg(&m.id) {
                             continue
                         }
                         this.ensure_user_res(&m.user);
                         let local   = m.time.with_timezone(&this.timezone);
-                        let mut res = this.res.borrow_mut();
-                        let mut usr = res.user_mut(&m.user.id).unwrap();
+                        let mut usr = this.res.user_mut(&m.user.id).unwrap();
                         let message = match m.data {
                             MessageData::Text(txt) => {
                                 let mut msg = TextMessage::new(None, &mut usr, &txt);
@@ -1413,8 +1403,7 @@ impl Coax {
                 for (u, c) in cc {
                     this.on_contact(&app, u, c)
                 }
-                let mut c = this.contacts.borrow_mut();
-                c.set_init()
+                this.contacts.set_init()
             }))
     }
 
@@ -1594,10 +1583,9 @@ impl Coax {
     }
 
     fn ensure_user_res(&self, u: &User) {
-        let mut res = self.res.borrow_mut();
-        if !res.has_user(&u.id) {
+        if !self.res.has_user(&u.id) {
             debug!(self.log, "adding user resources"; "user" => u.id.to_string());
-            res.add_user(u);
+            self.res.add_user(u);
             let logger = self.log.clone();
             let future = self.set_user_icon(u.id.clone())
                 .map_err(move |e| {

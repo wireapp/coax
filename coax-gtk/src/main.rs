@@ -2,6 +2,7 @@
 
 extern crate chrono;
 extern crate clap;
+extern crate chashmap;
 extern crate coax_actor;
 extern crate coax_api;
 extern crate coax_api_proto;

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use chashmap::{CHashMap, WriteGuard};
 use coax_api::types::UserId;
 use coax_data;
 use ffi;
@@ -101,23 +101,23 @@ impl<'a, 'b> From<&'b coax_data::User<'a>> for User {
 }
 
 pub struct Resources {
-    pub user: HashMap<UserId, User>
+    user: CHashMap<UserId, User>
 }
 
 impl Resources {
     pub fn new() -> Resources {
-        Resources { user: HashMap::new() }
+        Resources { user: CHashMap::new() }
     }
 
-    pub fn has_user(&mut self, u: &UserId) -> bool {
+    pub fn has_user(&self, u: &UserId) -> bool {
         self.user.contains_key(u)
     }
 
-    pub fn add_user(&mut self, u: &coax_data::User) {
+    pub fn add_user(&self, u: &coax_data::User) {
         self.user.insert(u.id.clone(), u.into());
     }
 
-    pub fn user_mut(&mut self, id: &UserId) -> Option<&mut User> {
+    pub fn user_mut(&self, id: &UserId) -> Option<WriteGuard<UserId, User>> {
         self.user.get_mut(id)
     }
 }

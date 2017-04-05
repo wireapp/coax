@@ -1,19 +1,19 @@
+use std::sync::atomic::{AtomicBool, Ordering};
+use chashmap::{CHashMap, WriteGuard};
 use coax_api::types::UserId;
 use coax_api::user::ConnectStatus;
 use coax_data::Connection;
 use ffi;
-use fnv::FnvHashMap;
 use gtk::{self, Align};
 use gtk::prelude::*;
 use res;
 
-#[derive(Clone)]
 pub struct Contacts {
     list:    gtk::ListBox,
     refresh: gtk::Button,
     view:    gtk::ScrolledWindow,
-    model:   FnvHashMap<UserId, Contact>,
-    init:    bool
+    model:   CHashMap<UserId, Contact>,
+    init:    AtomicBool
 }
 
 impl Contacts {
@@ -36,12 +36,12 @@ impl Contacts {
             list:    lst,
             refresh: refresh,
             view:    win,
-            model:   FnvHashMap::default(),
-            init:    false
+            model:   CHashMap::new(),
+            init:    AtomicBool::new(false)
         }
     }
 
-    pub fn add<F>(&mut self, u: &mut res::User, c: &Connection, k: F)
+    pub fn add<F>(&self, u: &mut res::User, c: &Connection, k: F)
         where F: Fn(&gtk::ComboBoxText, ConnectStatus) + 'static
     {
         let contact = Contact::new(u, c, k);
@@ -62,16 +62,16 @@ impl Contacts {
         &self.view
     }
 
-    pub fn get_mut(&mut self, id: &UserId) -> Option<&mut Contact> {
+    pub fn get_mut(&self, id: &UserId) -> Option<WriteGuard<UserId, Contact>> {
         self.model.get_mut(id)
     }
 
     pub fn is_init(&self) -> bool {
-        self.init
+        self.init.load(Ordering::Relaxed)
     }
 
-    pub fn set_init(&mut self) {
-        self.init = true
+    pub fn set_init(&self) {
+        self.init.store(true, Ordering::Relaxed)
     }
 
     pub fn set_refresh_action<F>(&self, f: F)
@@ -84,7 +84,6 @@ impl Contacts {
         self.refresh.set_sensitive(true)
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct Contact {

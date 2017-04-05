@@ -1,14 +1,14 @@
+use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::sync::atomic::{AtomicIsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
+use chashmap::{CHashMap, ReadGuard, WriteGuard};
 use chrono::{Date, DateTime, Local};
 use coax_api::conv::ConvType;
-use coax_data::ConvStatus;
 use coax_data::db::{PagingState, M};
 use coax_api::types::{Name, ConvId};
 use ffi;
-use fnv::FnvHashMap;
 use gdk_pixbuf::{InterpType, Pixbuf};
 use gio;
 use gtk::{self, Align};
@@ -17,10 +17,8 @@ use res;
 use signals::Signal;
 use util::hash;
 
-#[derive(Clone)]
 pub struct Channel {
     ctype:        ConvType,
-    image:        gtk::Image,
     name_label:   gtk::Label,
     sub_label:    gtk::Label,
     date_label:   gtk::Label,
@@ -28,13 +26,12 @@ pub struct Channel {
     channel_row:  gtk::ListBoxRow,
     message_list: gtk::ListBox,
     message_view: gtk::ScrolledWindow,
-    model:        FnvHashMap<u64, Message>,
-    init:         bool,
-    status:       ConvStatus,
-    autoscroll:   Rc<AtomicIsize>,
-    date_lower:   Date<Local>,
-    date_upper:   Date<Local>,
-    paging_state: Option<PagingState<M>>,
+    model:        CHashMap<u64, Message>,
+    init:         AtomicBool,
+    is_current:   AtomicBool,
+    date_lower:   Cell<Date<Local>>,
+    date_upper:   Cell<Date<Local>>,
+    paging_state: RefCell<Option<PagingState<M>>>,
     sig_at_top:   Rc<Signal<'static, (), ()>>
 }
 
@@ -159,7 +156,6 @@ impl Channel {
 
         let ch = Channel {
             ctype:        ct,
-            image:        img,
             name_label:   name_label,
             sub_label:    sub_label,
             date_label:   date_label,
@@ -167,13 +163,12 @@ impl Channel {
             channel_row:  channel_row,
             message_list: message_list,
             message_view: message_view,
-            model:        FnvHashMap::default(),
-            init:         false,
-            status:       ConvStatus::Current,
-            autoscroll:   autoscroll,
-            date_lower:   dt.date(),
-            date_upper:   dt.date(),
-            paging_state: None,
+            model:        CHashMap::default(),
+            init:         AtomicBool::new(false),
+            is_current:   AtomicBool::new(true),
+            date_lower:   Cell::new(dt.date()),
+            date_upper:   Cell::new(dt.date()),
+            paging_state: RefCell::new(None),
             sig_at_top:   sig_at_top
         };
 
@@ -186,12 +181,16 @@ impl Channel {
         &self.sig_at_top
     }
 
-    pub fn paging_state(&self) -> Option<&PagingState<M>> {
-        self.paging_state.as_ref()
+    pub fn paging_state(&self) -> Option<PagingState<M>> {
+        if let Some(ref p) = *self.paging_state.borrow() {
+            Some(p.clone())
+        } else {
+            None
+        }
     }
 
-    pub fn set_paging_state(&mut self, p: PagingState<M>) {
-        self.paging_state = Some(p)
+    pub fn set_paging_state(&self, p: PagingState<M>) {
+        *self.paging_state.borrow_mut() = Some(p)
     }
 
     pub fn conv_type(&self) -> ConvType {
@@ -199,19 +198,19 @@ impl Channel {
     }
 
     pub fn is_init(&self) -> bool {
-        self.init
+        self.init.load(Ordering::Relaxed)
     }
 
-    pub fn set_init(&mut self) {
-        self.init = true
+    pub fn set_init(&self) {
+        self.init.store(true, Ordering::Relaxed)
     }
 
-    pub fn status(&self) -> ConvStatus {
-        self.status
+    pub fn is_current(&self) -> bool {
+        self.is_current.load(Ordering::Relaxed)
     }
 
-    pub fn set_status(&mut self, s: ConvStatus) {
-        self.status = s
+    pub fn set_current(&self, b: bool) {
+        self.is_current.store(b, Ordering::Relaxed)
     }
 
     pub fn channel_row(&self) -> &gtk::ListBoxRow {
@@ -238,28 +237,28 @@ impl Channel {
         self.model.contains_key(&hash(k))
     }
 
-    pub fn get_msg(&self, k: &str) -> Option<&Message> {
+    pub fn get_msg(&self, k: &str) -> Option<ReadGuard<u64, Message>> {
         self.model.get(&hash(k))
     }
 
-    pub fn get_msg_mut(&mut self, k: &str) -> Option<&mut Message> {
+    pub fn get_msg_mut(&self, k: &str) -> Option<WriteGuard<u64, Message>> {
         self.model.get_mut(&hash(k))
     }
 
-    pub fn push_front_msg(&mut self, id: &str, m: Message) {
+    pub fn push_front_msg(&self, id: &str, m: Message) {
         if let Some(time) = m.datetime() {
-            if time.date() != self.date_lower && !self.model.is_empty() {
+            if time.date() != self.date_lower.get() && !self.model.is_empty() {
                 self.push_front_date()
             }
-            self.date_lower = time.date()
+            self.date_lower.set(time.date())
         }
         self.message_list.prepend(m.row());
         self.model.insert(hash(id), m);
     }
 
-    pub fn push_msg(&mut self, id: &str, m: Message) {
+    pub fn push_msg(&self, id: &str, m: Message) {
         if let Some(time) = m.datetime() {
-            if time.date() != self.date_upper || self.model.is_empty() {
+            if time.date() != self.date_upper.get() || self.model.is_empty() {
                 let dm = Message::date(time.date());
                 self.message_list.add(dm.row())
             }
@@ -269,22 +268,24 @@ impl Channel {
         self.model.insert(hash(id), m);
     }
 
-    pub fn insert_delivery_date(&mut self, k: &str, d: Date<Local>) {
-        let ix = self.get_msg(k).map(Message::index).unwrap_or(-1);
-        if ix != -1 && d != self.date_upper {
-            let dm = Message::date(d);
-            self.date_upper = d;
-            self.message_list.insert(dm.row(), ix);
+    pub fn insert_delivery_date(&self, k: &str, d: Date<Local>) {
+        if let Some(m) = self.get_msg(k) {
+            let i = m.index();
+            if i != -1 && d != self.date_upper.get() {
+                let dm = Message::date(d);
+                self.date_upper.set(d);
+                self.message_list.insert(dm.row(), i);
+            }
         }
     }
 
-    pub fn push_front_date(&mut self) {
-        let dm = Message::date(self.date_lower);
+    pub fn push_front_date(&self) {
+        let dm = Message::date(self.date_lower.get());
         self.message_list.prepend(dm.row())
     }
 
-    pub fn update_time(&mut self, dt: &DateTime<Local>) {
-        self.date_upper = dt.date();
+    pub fn update_time(&self, dt: &DateTime<Local>) {
+        self.date_upper.set(dt.date());
         self.set_time(dt);
         self.update_tstamp(dt.timestamp())
     }

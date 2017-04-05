@@ -17,6 +17,7 @@ pkg-config = ">= 0.3"
 prod = ["coax-actor/prod"]
 
 [dependencies]
+chashmap           = ">= 2.2"
 chrono             = ">= 0.2"
 clap               = "2"
 coax-actor         = { path = "../coax-actor" }

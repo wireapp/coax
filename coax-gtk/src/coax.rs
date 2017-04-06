@@ -60,16 +60,17 @@ pub struct Coax {
     futures:   Sender<Box<Future<Item=(), Error=()>>>,
     profiles:  Arc<Mutex<ProfileDb>>,
     builder:   gtk::Builder,
+    header:    gtk::Builder,
     info:      gtk::Label,
     revealer:  gtk::Revealer,
     mainview:  gtk::Grid,
     convlist:  gtk::ListBox,
     send_btn:  gtk::Button,
+    me_box:    gtk::Popover,
     timezone:  Local,
     channels:  Rc<CHashMap<ConvId, Channel>>,
     contacts:  Rc<Contacts>,
     me:        Rc<RefCell<User<'static>>>,
-    me_box:    Rc<RefCell<gtk::Popover>>,
     res:       Rc<res::Resources>,
     ch_state:  Rc<RefCell<Option<PagingState<C>>>>
 }
@@ -102,6 +103,8 @@ impl Coax {
         let info     = builder.get_object("info-label").unwrap();
         let sendbtn  = builder.get_object("send-button").unwrap();
         let mainview = builder.get_object("mainview").unwrap();
+        let header   = Builder::new_from_string(include_str!("gtk/header.ui"));
+        let popover  = header.get_object("profile-popover").unwrap();
 
         let css = gtk::CssProvider::new();
         css.load_from_data(include_str!("gtk/style.css"))?;
@@ -137,16 +140,17 @@ impl Coax {
             futures:   tx,
             profiles:  Arc::new(Mutex::new(pdb)),
             builder:   builder,
+            header:    header,
             info:      info,
             revealer:  revealer,
             mainview:  mainview,
             convlist:  convlist,
             send_btn:  sendbtn,
+            me_box:    popover,
             timezone:  Local::now().timezone(),
             contacts:  Rc::new(Contacts::new()),
             channels:  Rc::new(CHashMap::new()),
             me:        Rc::new(RefCell::new(usr)),
-            me_box:    Rc::new(RefCell::new(gtk::Popover::new(None : Option<&gtk::Label>))),
             res:       Rc::new(res::Resources::new()),
             ch_state:  Rc::new(RefCell::new(None))
         };
@@ -216,14 +220,10 @@ impl Coax {
             this.futures.send(boxed(future)).unwrap()
         }));
 
-        let header_builder = Builder::new_from_string(include_str!("gtk/header.ui"));
-        let bar: HeaderBar = header_builder.get_object("header").unwrap();
-        let menu: MenuButton = header_builder.get_object("menu-button").unwrap();
-
-        let profile_menu: gtk::MenuButton = header_builder.get_object("profile-menu").unwrap();
+        let bar: HeaderBar = self.header.get_object("header").unwrap();
+        let menu: MenuButton = self.header.get_object("menu-button").unwrap();
+        let profile_menu: gtk::MenuButton = self.header.get_object("profile-menu").unwrap();
         profile_menu.set_sensitive(false);
-
-        *self.me_box.borrow_mut() = header_builder.get_object("profile-popover").unwrap();
 
         let menu_builder = Builder::new_from_string(include_str!("gtk/button-menu.ui"));
         let model: MenuModel = menu_builder.get_object("button-menu").unwrap();
@@ -304,7 +304,7 @@ impl Coax {
 
         // Find button
 
-        let find_button: gtk::ToggleButton = header_builder.get_object("find-toggle-button").unwrap();
+        let find_button: gtk::ToggleButton = self.header.get_object("find-toggle-button").unwrap();
         let search_bar: gtk::SearchBar = self.builder.get_object("searchbar").unwrap();
         let search_input: gtk::SearchEntry = self.builder.get_object("search-entry").unwrap();
         find_button.connect_toggled(move |b| {
@@ -594,7 +594,7 @@ impl Coax {
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
                 let prof = ProfileView::new(&mut this.res.user_mut(&me.id).unwrap());
-                this.me_box.borrow().add(prof.vbox());
+                this.me_box.add(prof.vbox());
                 *this.me.borrow_mut() = me;
                 disable.set_enabled(false);
                 for e in &enable {
@@ -662,7 +662,7 @@ impl Coax {
                 set_subtitle(&app, Some(me.name.as_str()));
                 this.ensure_user_res(&me);
                 let prof = ProfileView::new(&mut this.res.user_mut(&me.id).unwrap());
-                this.me_box.borrow().add(prof.vbox());
+                this.me_box.add(prof.vbox());
                 *this.me.borrow_mut() = me;
                 disable.set_enabled(false);
                 for e in &enable {

@@ -41,12 +41,8 @@ impl Contacts {
         }
     }
 
-    pub fn add<F>(&self, u: &mut res::User, c: &Connection, k: F)
-        where F: Fn(&gtk::ComboBoxText, ConnectStatus) + 'static
-    {
-        let contact = Contact::new(u, c, k);
-        self.list.add(&contact.row);
-
+    pub fn add(&self, u: &mut res::User, c: Contact) {
+        self.list.add(&c.row);
         let sep = gtk::Separator::new(gtk::Orientation::Horizontal);
         sep.set_margin_left(12);
         sep.set_margin_right(12);
@@ -54,8 +50,7 @@ impl Contacts {
         row.add(&sep);
         row.show_all();
         self.list.add(&row);
-
-        self.model.insert(u.id.clone(), contact);
+        self.model.insert(u.id.clone(), c);
     }
 
     pub fn contact_view(&self) -> &gtk::ScrolledWindow {
@@ -81,7 +76,10 @@ impl Contacts {
             b.set_sensitive(false);
             f(b.clone())
         });
-        self.refresh.set_sensitive(true)
+    }
+
+    pub fn set_refresh_enabled(&self, value: bool) {
+        self.refresh.set_sensitive(value)
     }
 }
 
@@ -94,7 +92,7 @@ pub struct Contact {
 }
 
 impl Contact {
-    fn new<F>(usr: &mut res::User, contact: &Connection, k: F) -> Contact
+    pub fn new<F>(usr: &mut res::User, contact: &Connection, k: F) -> Contact
         where F: Fn(&gtk::ComboBoxText, ConnectStatus) + 'static
     {
         let row = gtk::ListBoxRow::new();
@@ -184,6 +182,10 @@ impl Contact {
 
     pub fn block_handler(&self, block: bool) {
         ffi::block_handler(&self.status, self.handler, block);
+    }
+
+    pub fn set_enabled(&self, value: bool) {
+        self.status.set_sensitive(value)
     }
 }
 

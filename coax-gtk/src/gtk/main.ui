@@ -159,7 +159,6 @@
             <child>
               <object class="GtkToolbar" id="conv-toolbar">
                 <property name="visible">True</property>
-                <property name="sensitive">False</property>
                 <property name="can_focus">False</property>
                 <property name="icon_size">4</property>
                 <child>

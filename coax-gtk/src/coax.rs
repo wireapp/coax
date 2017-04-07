@@ -25,7 +25,7 @@ use coax_data::{AssetStatus, AssetType};
 use coax_data::db::{PagingState, C};
 use coax_data::profiles::ProfileDb;
 use coax_net::http::tls::{self, Tls};
-use contact::Contacts;
+use contact::{Contact, Contacts};
 use error::Error;
 use ffi;
 use futures::Future;
@@ -43,29 +43,32 @@ use notify_rust::{Notification, NotificationHint};
 use poll::Loop;
 use profile::{self, ProfileView};
 use res;
+use signals::Signal;
 use slog::Logger;
 
 #[derive(Clone)]
 pub struct Coax {
-    log:       Logger,
-    config:    config::Main,
-    tls:       Arc<Tls>,
-    pool_on:   CpuPool, // sending & receiving threads (online)
-    pool_off:  CpuPool, // threads acting on local state (offline)
-    futures:   Sender<Box<Future<Item=(), Error=()>>>,
-    profiles:  Arc<Mutex<ProfileDb>>,
-    builder:   gtk::Builder,
-    header:    gtk::Builder,
-    info:      gtk::Label,
-    revealer:  gtk::Revealer,
-    mainview:  gtk::Grid,
-    convlist:  gtk::ListBox,
-    send_btn:  gtk::Button,
-    me_box:    gtk::Popover,
-    timezone:  Local,
-    channels:  Rc<CHashMap<ConvId, Channel>>,
-    contacts:  Rc<Contacts>,
-    resources: Rc<res::Resources>
+    log:        Logger,
+    config:     config::Main,
+    tls:        Arc<Tls>,
+    pool_on:    CpuPool, // sending & receiving threads (online)
+    pool_off:   CpuPool, // threads acting on local state (offline)
+    futures:    Sender<Box<Future<Item=(), Error=()>>>,
+    profiles:   Arc<Mutex<ProfileDb>>,
+    builder:    gtk::Builder,
+    header:     gtk::Builder,
+    info:       gtk::Label,
+    revealer:   gtk::Revealer,
+    mainview:   gtk::Grid,
+    convlist:   gtk::ListBox,
+    send_btn:   gtk::Button,
+    me_box:     gtk::Popover,
+    timezone:   Local,
+    channels:   Rc<CHashMap<ConvId, Channel>>,
+    contacts:   Rc<Contacts>,
+    resources:  Rc<res::Resources>,
+    sig_online: Rc<Signal<'static, bool, ()>>
+
 }
 
 struct State {
@@ -127,26 +130,34 @@ impl Coax {
         let (tx, rx) = channel();
         Loop::new(rx).start();
 
+        let contacts = Rc::new(Contacts::new());
+
+        let sig_online = Signal::new();
+        sig_online.connect(with!(contacts => move |status| {
+            contacts.set_refresh_enabled(*status)
+        }));
+
         let coax = Coax {
-            log:       log,
-            config:    cfg.clone(),
-            tls:       tls.clone(),
-            pool_on:   pool::Builder::new().pool_size(1).name_prefix("rem-").create(),
-            pool_off:  pool::Builder::new().pool_size(1).name_prefix("loc-").create(),
-            futures:   tx,
-            profiles:  Arc::new(Mutex::new(pdb)),
-            builder:   builder,
-            header:    header,
-            info:      info,
-            revealer:  revealer,
-            mainview:  mainview,
-            convlist:  convlist,
-            send_btn:  sendbtn,
-            me_box:    popover,
-            timezone:  Local::now().timezone(),
-            channels:  Rc::new(CHashMap::new()),
-            contacts:  Rc::new(Contacts::new()),
-            resources: Rc::new(res::Resources::new())
+            log:        log,
+            config:     cfg.clone(),
+            tls:        tls.clone(),
+            pool_on:    pool::Builder::new().pool_size(1).name_prefix("rem-").create(),
+            pool_off:   pool::Builder::new().pool_size(1).name_prefix("loc-").create(),
+            futures:    tx,
+            profiles:   Arc::new(Mutex::new(pdb)),
+            builder:    builder,
+            header:     header,
+            info:       info,
+            revealer:   revealer,
+            mainview:   mainview,
+            convlist:   convlist,
+            send_btn:   sendbtn,
+            me_box:     popover,
+            timezone:   Local::now().timezone(),
+            channels:   Rc::new(CHashMap::new()),
+            contacts:   contacts,
+            resources:  Rc::new(res::Resources::new()),
+            sig_online: Rc::new(sig_online)
         };
 
         app.connect_startup(Coax::startup);
@@ -184,12 +195,16 @@ impl Coax {
         let model: MenuModel = menu_builder.get_object("button-menu").unwrap();
         menu.set_menu_model(Some(&model));
 
+        let new_conv: gtk::ToolButton = self.builder.get_object("add-conv-button").unwrap();
+        new_conv.set_sensitive(false);
+
+        let show_contacts: gtk::ToolButton = self.builder.get_object("show-cons-button").unwrap();
+        show_contacts.set_sensitive(false);
+
         // Open menu action
 
-        let conv_bar: gtk::Toolbar = self.builder.get_object("conv-toolbar").unwrap();
-
         let open = SimpleAction::new("open", None);
-        open.connect_activate(with!(this, app, window, profile_menu, conv_bar => move |open, _| {
+        open.connect_activate(with!(this, app, window, profile_menu => move |open, _| {
             let builder = Builder::new_from_string(include_str!("gtk/open-account.ui"));
             let notebook: gtk::Notebook = builder.get_object("open-notebook").unwrap();
             let flags  = gtk::DIALOG_USE_HEADER_BAR | gtk::DIALOG_MODAL | gtk::DIALOG_DESTROY_WITH_PARENT;
@@ -233,7 +248,7 @@ impl Coax {
                 return ()
             }
 
-            let enable = vec![profile_menu.clone().upcast::<gtk::Widget>(), conv_bar.clone().upcast::<gtk::Widget>()];
+            let enable = vec![profile_menu.clone().upcast::<gtk::Widget>()];
             match notebook.get_current_page() {
                 Some(0) => {
                     let row = from_some!(profiles_list.get_selected_row());
@@ -393,6 +408,9 @@ impl Coax {
 
         let new_conv: gtk::ToolButton = self.builder.get_object("add-conv-button").unwrap();
         new_conv.connect_clicked(with!(this, state, app => move |_| this.show_new_conv(&state, &app)));
+        new_conv.set_sensitive(state.is_online.load(Ordering::Relaxed));
+
+        self.sig_online.connect(move |status| new_conv.set_sensitive(*status));
 
         let show_contacts: gtk::ToolButton = self.builder.get_object("show-cons-button").unwrap();
         show_contacts.connect_clicked(with!(this, state, app => move |_| {
@@ -412,6 +430,7 @@ impl Coax {
             this.mainview.attach(this.contacts.contact_view(), 0, 0, 1, 1);
             this.mainview.show_all()
         }));
+        show_contacts.set_sensitive(true);
 
         self.contacts.set_refresh_action(with!(this, state, app => move |btn| {
             let future =
@@ -425,6 +444,7 @@ impl Coax {
                     }));
             this.futures.send(boxed(future)).unwrap()
         }));
+        self.contacts.set_refresh_enabled(state.is_online.load(Ordering::Relaxed));
 
         let input: gtk::TextView = self.builder.get_object("main-text-input").unwrap();
 
@@ -706,6 +726,7 @@ impl Coax {
             .map(with!(this => move |state| {
                 this.hide_info();
                 this.set_user_icon(&state, state.me.id.clone());
+                this.sig_online.emit(true);
                 state
             }))
             .and_then(with!(this => move |state| {
@@ -728,6 +749,8 @@ impl Coax {
         trace!(self.log, "on_incoming");
         match pkg {
             Pkg::Connected => {
+                state.is_online.store(true, Ordering::Relaxed);
+                self.sig_online.emit(true);
                 let logger = self.log.clone();
                 let future = self.notifications(state, false)
                     .map_err(with!(logger => move |e| {
@@ -736,7 +759,11 @@ impl Coax {
                 self.futures.send(boxed(future)).unwrap();
                 self.hide_info()
             }
-            Pkg::Disconnected                 => self.show_info("Connection lost. Reconnecting ..."),
+            Pkg::Disconnected => {
+                state.is_online.store(false, Ordering::Relaxed);
+                self.sig_online.emit(false);
+                self.show_info("Connection lost. Reconnecting ...")
+            }
             Pkg::Message(m)                   => self.on_message(state, app, m),
             Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(state, app, m, c, t, s),
             Pkg::Conversation(c)              => self.on_conversation(state, app, c),
@@ -937,9 +964,12 @@ impl Coax {
         let this = self.clone();
         let uid  = to.id.clone();
         let cid  = contact.conv.clone();
-        self.contacts.add(&mut u, &contact, with!(state, app => move |w, s| {
+        let cont = Contact::new(&mut u, &contact, with!(state, app => move |w, s| {
             this.on_connect_change(&state, &app, w, uid.clone(), cid.clone(), s)
         }));
+        cont.set_enabled(state.is_online.load(Ordering::Relaxed));
+        self.sig_online.connect(with!(cont => move |status| cont.set_enabled(*status)));
+        self.contacts.add(&mut u, cont)
     }
 
     fn on_members_change(&self, state: &Arc<State>, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
@@ -1067,7 +1097,8 @@ impl Coax {
             .map(with!(s => move |_| {
                 s.set_sensitive(true)
             }))
-            .map_err(with!(app => move |e| {
+            .map_err(with!(app, s => move |e| {
+                s.set_sensitive(true);
                 error!(this.log, "failed to update status"; "error" => format!("{}", e));
                 show_error(&app, &e, "Failed to update status", "")
             }));

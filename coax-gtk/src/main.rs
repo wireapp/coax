@@ -29,6 +29,7 @@ extern crate libc;
 extern crate notify_rust;
 extern crate pango_sys;
 extern crate proteus;
+#[macro_use]
 extern crate quick_error;
 extern crate rand;
 #[macro_use]
@@ -50,6 +51,7 @@ mod ffi;
 mod channel;
 mod contact;
 mod coax;
+mod error;
 mod poll;
 mod profile;
 mod res;

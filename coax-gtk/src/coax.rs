@@ -11,7 +11,7 @@ use std::time::Duration;
 use chashmap::CHashMap;
 use channel::{Channel, Message, TextMessage, Image};
 use chrono::{DateTime, Local, UTC};
-use coax_actor::{Actor, Error, Pkg, Delivery};
+use coax_actor::{self, Actor, Pkg, Delivery};
 use coax_actor::actor::{Offline, Online};
 use coax_actor::config;
 use coax_api::conv::ConvType;
@@ -26,6 +26,7 @@ use coax_data::db::{PagingState, C};
 use coax_data::profiles::ProfileDb;
 use coax_net::http::tls::{self, Tls};
 use contact::Contacts;
+use error::Error;
 use ffi;
 use futures::Future;
 use futures::future;
@@ -543,7 +544,7 @@ impl Coax {
                 let params = user::register::Params::email(e, n, p);
                 let client = actor.connect()?;
                 let mut a  = actor.connected(client);
-                a.register_user(&params)
+                a.register_user(&params).map_err(From::from)
             })
             .map(with!(app, this => move |()| {
                 this.hide_info();
@@ -1022,7 +1023,7 @@ impl Coax {
                     let c = a.new_conversation(n, &[u])?;
                     Ok(Data::Conv(c))
                 } else {
-                    Err(Error::Message("invalid app state"))
+                    Err(Error::InvalidAppState)
                 }
             }))
             .map(with!(this, state, app => move |data| {
@@ -1051,9 +1052,9 @@ impl Coax {
             self.pool_on.spawn_fn(with!(state => move || {
                 let mut actor_guard = state.actor_on.lock().unwrap();
                 if let Some(ref mut a) = *actor_guard {
-                    a.update_connection(&uid, new)
+                    a.update_connection(&uid, new).map_err(From::from)
                 } else {
-                    Err(Error::Message("invalid app state"))
+                    Err(Error::InvalidAppState)
                 }
             }))
             .and_then(with!(this, state, app => move |updated| {
@@ -1098,7 +1099,7 @@ impl Coax {
         let logger = self.log.clone();
         let future = self.pool_off.spawn_fn(with!(state => move || {
                 let mut a = state.actor_off.lock().unwrap();
-                a.save_asset_as(&k, &p)
+                a.save_asset_as(&k, &p).map_err(From::from)
             }))
             .map_err(with!(app => move |e| {
                 error!(logger, "failed to save"; "error" => format!("{:?}", e));
@@ -1127,7 +1128,7 @@ impl Coax {
                         a.decrypt_asset(&ast.id, &ast.cksum, &ast.key)?;
                         Ok(a.asset_path(&ast.id))
                     } else {
-                        Err(Error::Message("invalid app state"))
+                        Err(Error::InvalidAppState)
                     }
                 }))
             };
@@ -1167,19 +1168,19 @@ impl Coax {
                     let mut actor_guard = state.actor_on.lock().unwrap();
                     if let Some(ref mut a) = *actor_guard {
                         if let Some(usr) = a.resolve_user(&u, true)? {
-                            a.load_user_icon(&usr)
+                            a.load_user_icon(&usr).map_err(From::from)
                         } else {
                             Ok(Vec::new())
                         }
                     } else {
-                        Err(Error::Message("invalid app state"))
+                        Err(Error::InvalidAppState)
                     }
                 }))
             } else {
                 self.pool_off.spawn_fn(with!(state, u => move || {
                     let mut a = state.actor_off.lock().unwrap();
                     if let Some(usr) = a.load_user(&u)? {
-                        a.load_user_icon(&usr)
+                        a.load_user_icon(&usr).map_err(From::from)
                     } else {
                         Ok(Vec::new())
                     }
@@ -1272,7 +1273,7 @@ impl Coax {
         debug!(self.log, "load conversations"; "paging_state" => format!("{:?}", pstate));
         self.pool_off.spawn_fn(with!(state => move || {
                 let mut a = state.actor_off.lock().unwrap();
-                a.load_conversations(pstate, 64)
+                a.load_conversations(pstate, 64).map_err(From::from)
             }))
             .map(with!(state, app => move |page| {
                 for c in page.data {
@@ -1288,9 +1289,9 @@ impl Coax {
         self.pool_on.spawn_fn(with!(state => move || {
                 let mut actor_guard = state.actor_on.lock().unwrap();
                 if let Some(ref mut a) = *actor_guard {
-                    a.resolve_conversations()
+                    a.resolve_conversations().map_err(From::from)
                 } else {
-                    Err(Error::Message("invalid app state"))
+                    Err(Error::InvalidAppState)
                 }
             }))
             .and_then(with!(this, state, app => move |()| {
@@ -1305,7 +1306,7 @@ impl Coax {
         debug!(self.log, "load conversation messages"; "id" => cid.to_string(), "paging_state" => format!("{:?}", pstate));
         self.pool_off.spawn_fn(with!(state => move || {
                 let mut a = state.actor_off.lock().unwrap();
-                a.load_messages(&conv_id, pstate, 32)
+                a.load_messages(&conv_id, pstate, 32).map_err(From::from)
             }))
             .map(with!(this, state, cid, app => move |mm| {
                 if let Some(chan) = this.channels.get(&cid) {
@@ -1363,7 +1364,7 @@ impl Coax {
         let this  = self.clone();
         self.pool_off.spawn_fn(with!(state => move || {
                 let mut a = state.actor_off.lock().unwrap();
-                a.load_contacts()
+                a.load_contacts().map_err(From::from)
             }))
             .map(with!(state, app => move |cc| {
                 for (u, c) in cc {
@@ -1379,9 +1380,9 @@ impl Coax {
         self.pool_on.spawn_fn(with!(state => move || {
                 let mut actor_guard = state.actor_on.lock().unwrap();
                 if let Some(ref mut a) = *actor_guard {
-                    a.resolve_user_connections()
+                    a.resolve_user_connections().map_err(From::from)
                 } else {
-                    Err(Error::Message("invalid app state"))
+                    Err(Error::InvalidAppState)
                 }
             }))
             .and_then(with!(this, state, app => move |()| {
@@ -1415,15 +1416,15 @@ impl Coax {
                                 a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?;
                                 return Ok(dt)
                             }
-                            Err(e@Error::MsgSend(ClientError::Error(send::Error::NotFound))) => {
+                            Err(e@coax_actor::Error::MsgSend(ClientError::Error(send::Error::NotFound))) => {
                                 a.dequeue(msg.get_message_id().as_bytes(), &params.conv)?;
-                                return Err(e)
+                                return Err(e.into())
                             }
                             Err(e) =>
                                 error!(logger, "failed to send message"; "id" => msg.get_message_id(), "error" => format!("{}", e))
                         }
                     } else {
-                        return Err(Error::Message("invalid app state"))
+                        return Err(Error::InvalidAppState)
                     }
                 }
                 thread::sleep(Duration::from_secs(3))
@@ -1436,9 +1437,9 @@ impl Coax {
         self.pool_on.spawn_fn(with!(state => move || {
             let mut actor_guard = state.actor_on.lock().unwrap();
             if let Some(ref mut a) = *actor_guard {
-                a.resend()
+                a.resend().map_err(From::from)
             } else {
-                Err(Error::Message("invalid app state"))
+                Err(Error::InvalidAppState)
             }
         }))
     }
@@ -1448,9 +1449,9 @@ impl Coax {
         self.pool_on.spawn_fn(with!(state, id => move || {
             let mut actor_guard = state.actor_on.lock().unwrap();
             if let Some(ref mut a) = *actor_guard {
-                a.resolve_conversation(&id)
+                a.resolve_conversation(&id).map_err(From::from)
             } else {
-                Err(Error::Message("invalid app state"))
+                Err(Error::InvalidAppState)
             }
         }))
     }
@@ -1460,15 +1461,15 @@ impl Coax {
         if allow_local {
             self.pool_off.spawn_fn(with!(state => move || {
                 let mut a = state.actor_off.lock().unwrap();
-                a.load_user(&id)
+                a.load_user(&id).map_err(From::from)
             }))
         } else {
             self.pool_on.spawn_fn(with!(state => move || {
                 let mut actor_guard = state.actor_on.lock().unwrap();
                 if let Some(ref mut a) = *actor_guard {
-                    a.resolve_user(&id, false)
+                    a.resolve_user(&id, false).map_err(From::from)
                 } else {
-                    Err(Error::Message("invalid app state"))
+                    Err(Error::InvalidAppState)
                 }
             }))
         }
@@ -1491,13 +1492,13 @@ impl Coax {
                         }
                         Err(e) => {
                             state.is_sync.store(false, Ordering::Relaxed);
-                            return Err(e)
+                            return Err(e.into())
                         }
                     }
                 }
                 Ok(())
             } else {
-                Err(Error::Message("invalid app state"))
+                Err(Error::InvalidAppState)
             }
         }))
     }

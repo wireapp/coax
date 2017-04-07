@@ -620,7 +620,7 @@ impl Coax {
                 for e in &enable {
                     e.set_sensitive(true)
                 }
-                gtk::timeout_add(500, with!(this, state, app => move || {
+                gtk::timeout_add(100, with!(this, state, app => move || {
                     for pkg in bcast_rx.try_iter() {
                         this.on_incoming(&state, &app, pkg)
                     }
@@ -694,7 +694,7 @@ impl Coax {
                 for e in &enable {
                     e.set_sensitive(true)
                 }
-                gtk::timeout_add(500, with!(this, state, app => move || {
+                gtk::timeout_add(100, with!(this, state, app => move || {
                     for pkg in bcast_rx.try_iter() {
                         this.on_incoming(&state, &app, pkg)
                     }

@@ -1,5 +1,4 @@
 use std;
-use std::cell::RefCell;
 use std::ffi::CString;
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -52,11 +51,6 @@ pub struct Coax {
     tls:       Arc<Tls>,
     pool_on:   CpuPool, // sending & receiving threads (online)
     pool_off:  CpuPool, // threads acting on local state (offline)
-    actor_on:  Arc<Mutex<Option<Actor<Online>>>>,
-    actor_off: Arc<Mutex<Option<Actor<Offline>>>>,
-    inbox:     Arc<Mutex<Option<JoinHandle<()>>>>,
-    is_sync:   Arc<AtomicBool>, // notifications are fetched from the server
-    complete:  Arc<AtomicBool>, // `actor_on` and `actor_off` are not `None`
     futures:   Sender<Box<Future<Item=(), Error=()>>>,
     profiles:  Arc<Mutex<ProfileDb>>,
     builder:   gtk::Builder,
@@ -70,9 +64,18 @@ pub struct Coax {
     timezone:  Local,
     channels:  Rc<CHashMap<ConvId, Channel>>,
     contacts:  Rc<Contacts>,
-    me:        Rc<RefCell<User<'static>>>,
-    res:       Rc<res::Resources>,
-    ch_state:  Rc<RefCell<Option<PagingState<C>>>>
+    resources: Rc<res::Resources>
+}
+
+#[derive(Clone)]
+struct State {
+    me:        Arc<User<'static>>,
+    actor_off: Arc<Mutex<Actor<Offline>>>,
+    actor_on:  Arc<Mutex<Option<Actor<Online>>>>,
+    inbox:     Arc<Mutex<Option<JoinHandle<()>>>>,
+    is_sync:   Arc<AtomicBool>,
+    is_online: Arc<AtomicBool>,
+    ch_state:  Arc<Mutex<Option<PagingState<C>>>>
 }
 
 macro_rules! from_some {
@@ -124,19 +127,12 @@ impl Coax {
         let (tx, rx) = channel();
         Loop::new(rx).start();
 
-        let usr = User::new(UserId::rand(), Name::new(""));
-
         let coax = Coax {
             log:       log,
             config:    cfg.clone(),
             tls:       tls.clone(),
-            actor_on:  Arc::new(Mutex::new(None)),
-            actor_off: Arc::new(Mutex::new(None)),
             pool_on:   pool::Builder::new().pool_size(1).name_prefix("rem-").create(),
             pool_off:  pool::Builder::new().pool_size(1).name_prefix("loc-").create(),
-            inbox:     Arc::new(Mutex::new(None)),
-            is_sync:   Arc::new(AtomicBool::new(false)),
-            complete:  Arc::new(AtomicBool::new(false)),
             futures:   tx,
             profiles:  Arc::new(Mutex::new(pdb)),
             builder:   builder,
@@ -148,11 +144,9 @@ impl Coax {
             send_btn:  sendbtn,
             me_box:    popover,
             timezone:  Local::now().timezone(),
-            contacts:  Rc::new(Contacts::new()),
             channels:  Rc::new(CHashMap::new()),
-            me:        Rc::new(RefCell::new(usr)),
-            res:       Rc::new(res::Resources::new()),
-            ch_state:  Rc::new(RefCell::new(None))
+            contacts:  Rc::new(Contacts::new()),
+            resources: Rc::new(res::Resources::new())
         };
 
         app.connect_startup(Coax::startup);
@@ -182,45 +176,6 @@ impl Coax {
             gtk::StyleContext::add_provider_for_screen(&s, &css, GTK_STYLE_PROVIDER_PRIORITY_USER as u32)
         });
 
-        let main: gtk::Box = self.builder.get_object("main").unwrap();
-
-        let conv_bar: gtk::Toolbar    = self.builder.get_object("conv-toolbar").unwrap();
-        let new_conv: gtk::ToolButton = self.builder.get_object("add-conv-button").unwrap();
-        new_conv.connect_clicked(with!(this, app => move |_| this.show_new_conv(&app)));
-
-        let show_contacts: gtk::ToolButton = self.builder.get_object("show-cons-button").unwrap();
-        show_contacts.connect_clicked(with!(this, app => move |_| {
-            if !this.contacts.is_init() {
-                let f =
-                    this.load_local_contacts(&app)
-                        .map_err(with!(this, app => move |e| {
-                            error!(this.log, "failed to load local contacts"; "error" => format!("{:?}", e));
-                            show_error(&app, &e, "Failed to load contacts", &format!("{}", e))
-                        }));
-                this.futures.send(boxed(f)).unwrap()
-            }
-            this.send_btn.set_sensitive(false);
-            this.convlist.unselect_all();
-            this.mainview.remove_row(0);
-            this.mainview.insert_row(0);
-            this.mainview.attach(this.contacts.contact_view(), 0, 0, 1, 1);
-            this.mainview.show_all()
-        }));
-
-        self.contacts.set_refresh_action(with!(this, app => move |btn| {
-            let future =
-                this.load_remote_contacts(&app)
-                    .and_then(with!(this, app => move |()| this.load_remote_conversations(&app)))
-                    .map(with!(btn => move |()| { btn.set_sensitive(true) }))
-                    .map_err(with!(this, app => move |e| {
-                        btn.set_sensitive(true);
-                        error!(this.log, "failed to load remote contacts"; "error" => format!("{:?}", e));
-                        show_error(&app, &e, "Failed to load contacts", &format!("{}", e))
-                    }));
-            this.futures.send(boxed(future)).unwrap()
-        }));
-
-        let bar: HeaderBar = self.header.get_object("header").unwrap();
         let menu: MenuButton = self.header.get_object("menu-button").unwrap();
         let profile_menu: gtk::MenuButton = self.header.get_object("profile-menu").unwrap();
         profile_menu.set_sensitive(false);
@@ -230,6 +185,8 @@ impl Coax {
         menu.set_menu_model(Some(&model));
 
         // Open menu action
+
+        let conv_bar: gtk::Toolbar = self.builder.get_object("conv-toolbar").unwrap();
 
         let open = SimpleAction::new("open", None);
         open.connect_activate(with!(this, app, window, profile_menu, conv_bar => move |open, _| {
@@ -282,14 +239,14 @@ impl Coax {
                     let row = from_some!(profiles_list.get_selected_row());
                     let id = ffi::get_data(&row, &ffi::KEY_ID);
                     with! { open =>
-                        this.on_profile(&app, open, enable, id.cloned())
+                        this.on_profile(&app, &window, open, enable, id.cloned())
                     }
                 }
                 Some(1) => {
                     let email = login_email.get_text().unwrap_or(String::new());
                     let pass = login_pass.get_text().unwrap_or(String::new());
                     with! { open =>
-                        this.on_login(&app, open, enable, Email::new(email), Password::new(pass))
+                        this.on_login(&app, &window, open, enable, Email::new(email), Password::new(pass))
                     }
                 }
                 Some(2) => {
@@ -315,69 +272,6 @@ impl Coax {
                 search_bar.set_search_mode(false)
             }
         });
-
-        let input: gtk::TextView = self.builder.get_object("main-text-input").unwrap();
-
-        self.convlist.connect_row_selected(with!(this, app, input => move |_, row| {
-            if let Some(r) = row.as_ref() {
-                ffi::get_data(r, &ffi::KEY_ID).map(|id| {
-                    if let Some(ch) = this.channels.get(id) {
-                        if !ch.is_init() {
-                            this.on_message_demand(&app, &id)
-                        }
-                        ch.set_read();
-                        this.mainview.remove_row(0);
-                        this.mainview.insert_row(0);
-                        this.mainview.attach(ch.message_view(), 0, 0, 1, 1);
-                        this.mainview.show_all();
-                        let value = input.get_buffer()
-                            .map(|buf| buf.get_char_count() > 0)
-                            .unwrap_or(false);
-                        this.send_btn.set_sensitive(value && ch.is_current());
-                    } else {
-                        this.send_btn.set_sensitive(false)
-                    }
-                });
-            } else {
-                this.send_btn.set_sensitive(false)
-            }
-        }));
-
-        let button = self.send_btn.clone();
-
-        input.get_buffer().map(|buf| buf.connect_changed(with!(button, this => move |buf| {
-            let is_current =
-                if let Some(row) = this.convlist.get_selected_row() {
-                    ffi::get_data(&row, &ffi::KEY_ID)
-                        .and_then(|id| {
-                            this.channels.get(id).map(|chan| chan.is_current())
-                        })
-                } else {
-                    None
-                };
-            let value = is_current == Some(true) && buf.get_char_count() > 0;
-            button.set_sensitive(value)
-        })));
-
-        let send = SimpleAction::new("send", None);
-        send.connect_activate(with!(this, input => move |_, _| {
-            if !button.is_sensitive() {
-                return ()
-            }
-            let row = this.convlist.get_selected_row();
-            let cid = from_some!(row.as_ref().and_then(|r| ffi::get_data(r, &ffi::KEY_ID)));
-            let buf = from_some!(input.get_buffer());
-            let (mut s, mut e) = buf.get_bounds();
-            let txt = from_some!(buf.get_text(&s, &e, false));
-            let msg = MsgBuilder::new().text(txt.trim_right()).finish();
-            let log = this.log.clone();
-            let fut = this.send_message(cid, msg).map_err(move |e| {
-                error!(log, "failed to send message"; "error" => format!("{:?}", e))
-            });
-            this.futures.send(boxed(fut)).unwrap();
-            buf.delete(&mut s, &mut e);
-        }));
-        self.send_btn.connect_clicked(with!(send => move |_| send.activate(None)));
 
         let main_pane: gtk::Paned = self.builder.get_object("main-pane").unwrap();
         let max_left = SimpleAction::new("max_left", None);
@@ -415,6 +309,7 @@ impl Coax {
             }
         }));
         let max_bottom = SimpleAction::new("max_bottom", None);
+        let input: gtk::TextView = self.builder.get_object("main-text-input").unwrap();
         max_bottom.connect_activate(move |_, _| {
             if !right_pane.is_visible() {
                 return ()
@@ -430,7 +325,6 @@ impl Coax {
         });
 
         window.add_action(&open);
-        window.add_action(&send);
         window.add_action(&max_left);
         window.add_action(&max_right);
         window.add_action(&max_top);
@@ -442,17 +336,10 @@ impl Coax {
         app.set_accels_for_action("win.max_top", &["<Alt>Down"]);
         app.set_accels_for_action("win.max_bottom", &["<Alt>Up"]);
 
-        let conv_view: gtk::ScrolledWindow = self.builder.get_object("conversation-view").unwrap();
-
-        if let Some(vadj) = conv_view.get_vadjustment() {
-            vadj.connect_value_changed(with!(this, app => move |va| {
-                if va.get_value() == va.get_upper() - va.get_page_size() { // at bottom
-                    this.on_conversation_demand(&app)
-                }
-            }));
-        }
-
+        let main: gtk::Box = self.builder.get_object("main").unwrap();
         window.add(&main);
+
+        let bar: HeaderBar = self.header.get_object("header").unwrap();
         window.set_titlebar(Some(&bar));
 
         window.show_all()
@@ -499,6 +386,119 @@ impl Coax {
             submit.set_sensitive(row.is_some())
         }));
         list.show_all()
+    }
+
+    fn setup_callbacks(&self, state: &State, app: &gtk::Application, app_win: &gtk::ApplicationWindow) {
+        let this = self.clone();
+
+        let new_conv: gtk::ToolButton = self.builder.get_object("add-conv-button").unwrap();
+        new_conv.connect_clicked(with!(this, state, app => move |_| this.show_new_conv(&state, &app)));
+
+        let show_contacts: gtk::ToolButton = self.builder.get_object("show-cons-button").unwrap();
+        show_contacts.connect_clicked(with!(this, state, app => move |_| {
+            if !this.contacts.is_init() {
+                let f =
+                    this.load_local_contacts(&state, &app)
+                        .map_err(with!(this, app => move |e| {
+                            error!(this.log, "failed to load local contacts"; "error" => format!("{:?}", e));
+                            show_error(&app, &e, "Failed to load contacts", &format!("{}", e))
+                        }));
+                this.futures.send(boxed(f)).unwrap()
+            }
+            this.send_btn.set_sensitive(false);
+            this.convlist.unselect_all();
+            this.mainview.remove_row(0);
+            this.mainview.insert_row(0);
+            this.mainview.attach(this.contacts.contact_view(), 0, 0, 1, 1);
+            this.mainview.show_all()
+        }));
+
+        self.contacts.set_refresh_action(with!(this, state, app => move |btn| {
+            let future =
+                this.load_remote_contacts(&state, &app)
+                    .and_then(with!(this, state, app => move |()| this.load_remote_conversations(&state, &app)))
+                    .map(with!(btn => move |()| { btn.set_sensitive(true) }))
+                    .map_err(with!(this, app => move |e| {
+                        btn.set_sensitive(true);
+                        error!(this.log, "failed to load remote contacts"; "error" => format!("{:?}", e));
+                        show_error(&app, &e, "Failed to load contacts", &format!("{}", e))
+                    }));
+            this.futures.send(boxed(future)).unwrap()
+        }));
+
+        let input: gtk::TextView = self.builder.get_object("main-text-input").unwrap();
+
+        self.convlist.connect_row_selected(with!(this, state, app, input => move |_, row| {
+            if let Some(r) = row.as_ref() {
+                ffi::get_data(r, &ffi::KEY_ID).map(|id| {
+                    if let Some(ch) = this.channels.get(id) {
+                        if !ch.is_init() {
+                            this.on_message_demand(&state, &app, &id)
+                        }
+                        ch.set_read();
+                        this.mainview.remove_row(0);
+                        this.mainview.insert_row(0);
+                        this.mainview.attach(ch.message_view(), 0, 0, 1, 1);
+                        this.mainview.show_all();
+                        let value = input.get_buffer()
+                            .map(|buf| buf.get_char_count() > 0)
+                            .unwrap_or(false);
+                        this.send_btn.set_sensitive(value && ch.is_current());
+                    } else {
+                        this.send_btn.set_sensitive(false)
+                    }
+                });
+            } else {
+                this.send_btn.set_sensitive(false)
+            }
+        }));
+
+        let button = self.send_btn.clone();
+
+        input.get_buffer().map(|buf| buf.connect_changed(with!(button, this => move |buf| {
+            let is_current =
+                if let Some(row) = this.convlist.get_selected_row() {
+                    ffi::get_data(&row, &ffi::KEY_ID)
+                        .and_then(|id| {
+                            this.channels.get(id).map(|chan| chan.is_current())
+                        })
+                } else {
+                    None
+                };
+            let value = is_current == Some(true) && buf.get_char_count() > 0;
+            button.set_sensitive(value)
+        })));
+
+        let send = SimpleAction::new("send", None);
+        send.connect_activate(with!(this, state, input => move |_, _| {
+            if !button.is_sensitive() {
+                return ()
+            }
+            let row = this.convlist.get_selected_row();
+            let cid = from_some!(row.as_ref().and_then(|r| ffi::get_data(r, &ffi::KEY_ID)));
+            let buf = from_some!(input.get_buffer());
+            let (mut s, mut e) = buf.get_bounds();
+            let txt = from_some!(buf.get_text(&s, &e, false));
+            let msg = MsgBuilder::new().text(txt.trim_right()).finish();
+            let log = this.log.clone();
+            let fut = this.send_message(&state, cid, msg).map_err(move |e| {
+                error!(log, "failed to send message"; "error" => format!("{:?}", e))
+            });
+            this.futures.send(boxed(fut)).unwrap();
+            buf.delete(&mut s, &mut e);
+        }));
+        self.send_btn.connect_clicked(with!(send => move |_| send.activate(None)));
+        app_win.add_action(&send);
+
+        let conv_view: gtk::ScrolledWindow = self.builder.get_object("conversation-view").unwrap();
+
+        if let Some(vadj) = conv_view.get_vadjustment() {
+            vadj.connect_value_changed(with!(this, state, app => move |va| {
+                if va.get_value() == va.get_upper() - va.get_page_size() { // at bottom
+                    this.on_conversation_demand(&state, &app)
+                }
+            }));
+        }
     }
 
     fn proceed_registration(email: &gtk::Entry, name: &gtk::Entry, pass: &gtk::Entry) -> bool {
@@ -560,66 +560,70 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
-    fn on_login(&self, app: &gtk::Application, disable: SimpleAction, enable: Vec<gtk::Widget>, e: Email<'static>, p: Password<'static>) {
+    fn on_login(&self, app: &gtk::Application, app_win: &gtk::ApplicationWindow, disable: SimpleAction, enable: Vec<gtk::Widget>, e: Email<'static>, p: Password<'static>) {
         debug!(self.log, "on_login"; "e-mail" => e.as_str());
         let (bcast_tx, bcast_rx) = std::sync::mpsc::channel();
-
-        let actor     = Actor::new(&self.log, self.config.clone(), self.tls.clone());
-        let actor_on  = self.actor_on.clone();
-        let actor_off = self.actor_off.clone();
-
+        let actor  = Actor::new(&self.log, self.config.clone(), self.tls.clone());
         let this   = self.clone();
-        let inbox  = self.inbox.clone();
         let profs  = self.profiles.clone();
         let future =
             self.pool_on.spawn_fn(move || {
-                let client    = actor.connect()?;
-                let mut actor = actor.connected(client);
-                let params    = user::login::Params::email(e, p, Label::new("coax-gtk"));
-                let user      = actor.login(&params)?;
-                let mut actor = actor.online(user, bcast_tx);
-                let me        = actor.me().clone();
-                let is_new    = actor.is_new_client();
+                let client       = actor.connect()?;
+                let mut actor    = actor.connected(client);
+                let params       = user::login::Params::email(e, p, Label::new("coax-gtk"));
+                let user         = actor.login(&params)?;
+                let mut actor_on = actor.online(user, bcast_tx);
+                let me           = actor_on.me().clone();
+                let is_new       = actor_on.is_new_client();
                 profs.lock().unwrap().insert(&me)?;
-                let mut i = actor.new_inbox()?;
-                let     w = i.connect()?;
-                *inbox.lock().unwrap()     = Some(i.fork(w));
-                *actor_off.lock().unwrap() = Some(actor.clone_offline()?);
-                *actor_on.lock().unwrap()  = Some(actor);
-                Ok((me, is_new))
+                let mut inbox = actor_on.new_inbox()?;
+                let wsock = inbox.connect()?;
+                let state = State {
+                    me:        Arc::new(me),
+                    actor_off: Arc::new(Mutex::new(actor_on.clone_offline()?)),
+                    actor_on:  Arc::new(Mutex::new(Some(actor_on))),
+                    inbox:     Arc::new(Mutex::new(Some(inbox.fork(wsock)))),
+                    is_sync:   Arc::new(AtomicBool::new(false)),
+                    is_online: Arc::new(AtomicBool::new(true)),
+                    ch_state:  Arc::new(Mutex::new(None))
+                };
+                Ok((state, is_new))
             })
-            .and_then(with!(this, app => move |(me, is_new_client)| {
-                this.complete.store(true, Ordering::Relaxed);
+            .and_then(with!(this, app, app_win => move |(state, is_new_client)| {
+                this.setup_callbacks(&state, &app, &app_win);
                 this.show_info("Loading conversations ...");
-                set_subtitle(&app, Some(me.name.as_str()));
-                this.ensure_user_res(&me);
-                let prof = ProfileView::new(&mut this.res.user_mut(&me.id).unwrap());
+                set_subtitle(&app, Some(state.me.name.as_str()));
+                this.ensure_user_res(&state, &state.me);
+                let prof = ProfileView::new(&mut this.resources.user_mut(&state.me.id).unwrap());
                 this.me_box.add(prof.vbox());
-                *this.me.borrow_mut() = me;
                 disable.set_enabled(false);
                 for e in &enable {
                     e.set_sensitive(true)
                 }
-                gtk::timeout_add(500, with!(this, app => move || {
+                gtk::timeout_add(500, with!(this, state, app => move || {
                     for pkg in bcast_rx.try_iter() {
-                        this.on_incoming(&app, pkg)
+                        this.on_incoming(&state, &app, pkg)
                     }
                     Continue(true)
                 }));
                 if is_new_client {
-                    boxed(this.load_remote_conversations(&app).and_then(with!(this => move |()| this.load_remote_contacts(&app))))
+                    let f = this.load_remote_conversations(&state, &app)
+                        .and_then(with!(this, state => move |()| this.load_remote_contacts(&state, &app)))
+                        .map(with!(state => move |()| state));
+                    boxed(f)
                 } else {
-                    boxed(this.load_local_conversations(&app))
+                    let f = this.load_local_conversations(&state, &app)
+                        .map(with!(state => move |()| state));
+                    boxed(f)
                 }
             }))
-            .and_then(with!(this => move |()| {
+            .and_then(with!(this => move |state| {
                 this.show_info("Synchronising ...");
-                this.notifications(true)
+                this.notifications(&state, true).map(move |()| state)
             }))
-            .and_then(with!(this => move |_| {
+            .and_then(with!(this => move |state| {
                 this.hide_info();
-                let id = this.me.borrow().id.clone();
-                this.set_user_icon(id)
+                this.set_user_icon(&state, state.me.id.clone())
             }))
             .map_err(with!(app, this => move |e| {
                 this.hide_info();
@@ -630,7 +634,7 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
-    fn on_profile(&self, app: &gtk::Application, disable: SimpleAction, enable: Vec<gtk::Widget>, uid: Option<UserId>) {
+    fn on_profile(&self, app: &gtk::Application, app_win: &gtk::ApplicationWindow, disable: SimpleAction, enable: Vec<gtk::Widget>, uid: Option<UserId>) {
         debug!(self.log, "on_profile"; "user" => uid.as_ref().map(UserId::to_string).unwrap_or(String::new()));
         let user_id =
             if let Some(u) = uid {
@@ -641,72 +645,71 @@ impl Coax {
             };
 
         let (bcast_tx, bcast_rx) = std::sync::mpsc::channel();
-
         let mut actor = Actor::new(&self.log, self.config.clone(), self.tls.clone());
-        let actor_on  = self.actor_on.clone();
-        let actor_off = self.actor_off.clone();
-
         let this   = self.clone();
         let logger = self.log.clone();
-        let inbox  = self.inbox.clone();
         let future =
-            self.pool_on.spawn_fn(with!(actor_off => move || {
-                let user  = actor.profile(&user_id)?;
-                let actor = actor.offline(user, bcast_tx);
-                let me    = actor.me().clone();
-                *actor_off.lock().unwrap() = Some(actor);
-                Ok(me)
-            }))
-            .and_then(with!(this, app => move |me| {
+            self.pool_on.spawn_fn(move || {
+                let user      = actor.profile(&user_id)?;
+                let actor_off = actor.offline(user, bcast_tx);
+                let state = State {
+                    me:        Arc::new(actor_off.me().clone()),
+                    actor_off: Arc::new(Mutex::new(actor_off)),
+                    actor_on:  Arc::new(Mutex::new(None)),
+                    inbox:     Arc::new(Mutex::new(None)),
+                    is_sync:   Arc::new(AtomicBool::new(false)),
+                    is_online: Arc::new(AtomicBool::new(false)),
+                    ch_state:  Arc::new(Mutex::new(None))
+                };
+                Ok(state)
+            })
+            .and_then(with!(this, app, app_win => move |state| {
+                this.setup_callbacks(&state, &app, &app_win);
                 this.show_info("Loading conversations ...");
-                set_subtitle(&app, Some(me.name.as_str()));
-                this.ensure_user_res(&me);
-                let prof = ProfileView::new(&mut this.res.user_mut(&me.id).unwrap());
+                set_subtitle(&app, Some(state.me.name.as_str()));
+                this.ensure_user_res(&state, &state.me);
+                let prof = ProfileView::new(&mut this.resources.user_mut(&state.me.id).unwrap());
                 this.me_box.add(prof.vbox());
-                *this.me.borrow_mut() = me;
                 disable.set_enabled(false);
                 for e in &enable {
                     e.set_sensitive(true)
                 }
-                gtk::timeout_add(500, with!(this, app => move || {
+                gtk::timeout_add(500, with!(this, state, app => move || {
                     for pkg in bcast_rx.try_iter() {
-                        this.on_incoming(&app, pkg)
+                        this.on_incoming(&state, &app, pkg)
                     }
                     Continue(true)
                 }));
-                this.load_local_conversations(&app)
+                this.load_local_conversations(&state, &app).map(with!(state => |()| state))
             }))
-            .and_then(with!(this => move |()| {
+            .and_then(with!(this => move |state| {
                 this.pool_on.spawn_fn(move || {
-                    let mut actor_off_guard = actor_off.lock().unwrap();
-                    if let Some(ref mut actor1) = *actor_off_guard {
-                        let client     = actor1.connect()?;
-                        let mut actor2 = actor1.clone_online(client)?;
-                        actor2.renew_access()?;
-                        let mut i = actor2.new_inbox()?;
+                    {
+                        let actor_off     = state.actor_off.lock().unwrap();
+                        let client        = actor_off.connect()?;
+                        let mut actor_on  = actor_off.clone_online(client)?;
+                        actor_on.renew_access()?;
+                        actor_on.resolve_user(&state.me.id, false)?;
+                        let mut i = actor_on.new_inbox()?;
                         let     w = i.connect()?;
-                        *inbox.lock().unwrap() = Some(i.fork(w));
-                        let id = actor2.me().id.clone();
-                        actor2.resolve_user(&id, false)?;
-                        *actor_on.lock().unwrap() = Some(actor2);
-                        Ok(())
-                    } else {
-                        Err(Error::Message("invalid app state"))
+                        *state.inbox.lock().unwrap()    = Some(i.fork(w));
+                        *state.actor_on.lock().unwrap() = Some(actor_on);
+                        state.is_online.store(true, Ordering::Relaxed);
                     }
+                    Ok(state)
                 })
             }))
-            .and_then(with!(this => move |_| {
-                this.complete.store(true, Ordering::Relaxed);
+            .and_then(with!(this => move |state| {
                 this.show_info("Synchronising ...");
-                this.notifications(true)
+                this.notifications(&state, true).map(move |()| state)
             }))
-            .map(with!(this => move |_| {
+            .map(with!(this => move |state| {
                 this.hide_info();
-                let id = this.me.borrow().id.clone();
-                this.set_user_icon(id)
+                this.set_user_icon(&state, state.me.id.clone());
+                state
             }))
-            .and_then(with!(this => move |_| {
-                this.resend_messages()
+            .and_then(with!(this => move |state| {
+                this.resend_messages(&state)
             }))
             .map_err(with!(app => move |e| {
                 this.hide_info();
@@ -721,12 +724,12 @@ impl Coax {
     // Callbacks
     //
 
-    fn on_incoming(&self, app: &gtk::Application, pkg: Pkg) {
+    fn on_incoming(&self, state: &State, app: &gtk::Application, pkg: Pkg) {
         trace!(self.log, "on_incoming");
         match pkg {
             Pkg::Connected => {
                 let logger = self.log.clone();
-                let future = self.notifications(false)
+                let future = self.notifications(state, false)
                     .map_err(with!(logger => move |e| {
                         error!(logger, "failed to get notifications"; "error" => format!("{}", e))
                     }));
@@ -734,23 +737,23 @@ impl Coax {
                 self.hide_info()
             }
             Pkg::Disconnected                 => self.show_info("Connection lost. Reconnecting ..."),
-            Pkg::Message(m)                   => self.on_message(app, m),
-            Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(app, m, c, t, s),
-            Pkg::Conversation(c)              => self.on_conversation(app, c),
-            Pkg::Contact(u, c)                => self.on_contact(app, u, c),
-            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(app, d, c, m, s, u)
+            Pkg::Message(m)                   => self.on_message(state, app, m),
+            Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(state, app, m, c, t, s),
+            Pkg::Conversation(c)              => self.on_conversation(state, app, c),
+            Pkg::Contact(u, c)                => self.on_contact(state, app, u, c),
+            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(state, app, d, c, m, s, u)
         }
     }
 
-    fn on_message(&self, app: &gtk::Application, m: coax_data::Message<'static>) {
+    fn on_message(&self, state: &State, app: &gtk::Application, m: coax_data::Message<'static>) {
         debug!(self.log, "on_message"; "conv" => m.conv.to_string(), "id" => m.id);
         let this   = self.clone();
         let logger = self.log.clone();
         if let Some(ch) = self.channels.get(&m.conv) {
             if !ch.has_msg(&m.id) {
-                self.ensure_user_res(&m.user);
+                self.ensure_user_res(state, &m.user);
                 let mtime   = m.time.with_timezone(&self.timezone);
-                let mut usr = self.res.user_mut(&m.user.id).unwrap();
+                let mut usr = self.resources.user_mut(&m.user.id).unwrap();
                 self.show_notification(app, &usr, &m);
                 if ch.is_init() {
                     match m.data {
@@ -761,12 +764,12 @@ impl Coax {
                                 let img = gtk::DrawingArea::new();
                                 let msg = Image::new(mtime, &mut usr, img.clone(), app.get_active_window());
                                 let aid = ast.id.clone();
-                                msg.signal_save().connect(with!(app => move |p| {
-                                    this.save_as(&app, aid.clone(), p.clone())
+                                msg.signal_save().connect(with!(state, app => move |p| {
+                                    this.save_as(&state, &app, aid.clone(), p.clone())
                                 }));
                                 msg.start_spinner();
                                 ch.push_msg(&m.id, Message::Image(msg));
-                                let future = self.set_image(ast, m.conv.clone(), m.id.clone(), img)
+                                let future = self.set_image(state, ast, m.conv.clone(), m.id.clone(), img)
                                     .map_err(with!(logger => move |e| {
                                         error!(logger, "failed to set image"; "error" => format!("{:?}", e))
                                     }));
@@ -782,8 +785,8 @@ impl Coax {
                 if !ch.is_selected() {
                     ch.set_unread()
                 }
-                if ch.conv_type() == ConvType::OneToOne && !self.is_sync.load(Ordering::Relaxed) {
-                    let future = self.send_confirmation(&m.conv, &m.id)
+                if ch.conv_type() == ConvType::OneToOne && !state.is_sync.load(Ordering::Relaxed) {
+                    let future = self.send_confirmation(state, &m.conv, &m.id)
                         .map_err(with!(logger => move |e| {
                             error!(logger, "failed to send confirmation"; "error" => format!("{:?}", e))
                         }));
@@ -793,11 +796,11 @@ impl Coax {
         } else {
             let conv_id = m.conv.to_string();
             info!(self.log, "message for unresolved conversation"; "conv" => conv_id);
-            let future = self.conversation(&m.conv)
-                .map(with!(this, app => move |conv| {
+            let future = self.conversation(state, &m.conv)
+                .map(with!(this, state, app => move |conv| {
                     if let Some(c) = conv {
-                        this.on_conversation(&app, c);
-                        this.on_message(&app, m)
+                        this.on_conversation(&state, &app, c);
+                        this.on_message(&state, &app, m)
                     } else {
                         error!(this.log, "failed to resolve conversation"; "id" => conv_id)
                     }
@@ -809,7 +812,7 @@ impl Coax {
         }
     }
 
-    fn on_message_update(&self, app: &gtk::Application, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
+    fn on_message_update(&self, state: &State, app: &gtk::Application, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
         debug!(self.log, "on_message_update"; "conv" => c.to_string(), "id" => id);
         if let Some(ch) = self.channels.get(&c) {
             if let Some(mut m) = ch.get_msg_mut(&id) {
@@ -825,12 +828,12 @@ impl Coax {
             info!(self.log, "message update for unresolved conversation"; "conv" => c.to_string());
             let this   = self.clone();
             let logger = self.log.clone();
-            let future = self.conversation(&c)
-                .map(with!(this, app => move |conv| {
+            let future = self.conversation(state, &c)
+                .map(with!(this, state, app => move |conv| {
                     if let Some(c) = conv {
                         let cid = c.id.clone();
-                        this.on_conversation(&app, c);
-                        this.on_message_update(&app, id, cid, t, s)
+                        this.on_conversation(&state, &app, c);
+                        this.on_message_update(&state, &app, id, cid, t, s)
                     } else {
                         error!(this.log, "failed to resolve conversation"; "id" => c.to_string());
                     }
@@ -842,7 +845,7 @@ impl Coax {
         }
     }
 
-    fn on_conversation(&self, app: &gtk::Application, mut conv: Conversation<'static>) {
+    fn on_conversation(&self, state: &State, app: &gtk::Application, mut conv: Conversation<'static>) {
         debug!(self.log, "on_conversation"; "conv" => conv.id.to_string());
         if self.channels.contains_key(&conv.id) {
             debug!(self.log, "conversation already loaded"; "conv" => conv.id.to_string());
@@ -860,8 +863,8 @@ impl Coax {
         if conv.ctype == ConvType::Group {
             let ch = Channel::group(&conv.time.with_timezone(&self.timezone), &conv.id, &conv.name, conv.members.len());
             ch.set_current(conv.status == ConvStatus::Current);
-            ch.signal_at_top().connect(with!(app, cid => move |_| {
-                this.on_message_demand(&app, &cid)
+            ch.signal_at_top().connect(with!(state, app, cid => move |_| {
+                this.on_message_demand(&state, &app, &cid)
             }));
             self.convlist.add(ch.channel_row());
             self.channels.insert(conv.id, ch);
@@ -869,15 +872,14 @@ impl Coax {
             return ()
         }
 
-        // Set remote user name as conversation name if user is already in `self.res`.
-        let me = self.me.borrow();
-        if let Some(uid) = conv.members.iter().filter(|m| **m != me.id).next().cloned() {
-            if let Some(mut u) = self.res.user_mut(&uid) {
+        // Set remote user name as conversation name if user is already in `self.resources`.
+        if let Some(uid) = conv.members.iter().filter(|m| **m != state.me.id).next().cloned() {
+            if let Some(mut u) = self.resources.user_mut(&uid) {
                 conv.set_name(Name::new(u.name.clone()));
                 let ch = Channel::one_to_one(&conv.time.with_timezone(&self.timezone), &conv.id, &mut u);
                 ch.set_current(conv.status == ConvStatus::Current);
-                ch.signal_at_top().connect(with!(app, cid => move |_| {
-                    this.on_message_demand(&app, &cid)
+                ch.signal_at_top().connect(with!(state, app, cid => move |_| {
+                    this.on_message_demand(&state, &app, &cid)
                 }));
                 self.convlist.add(ch.channel_row());
                 self.channels.insert(conv.id, ch);
@@ -887,7 +889,7 @@ impl Coax {
         }
 
         let user_id =
-            if let Some(id) = conv.members.iter().filter(|m| **m != me.id).next().cloned() {
+            if let Some(id) = conv.members.iter().filter(|m| **m != state.me.id).next().cloned() {
                 id
             } else {
                 warn!(self.log, "no user found in 1:1 conversation"; "conv" => conv.id.to_string());
@@ -895,16 +897,16 @@ impl Coax {
             };
 
         let this   = self.clone();
-        let future = self.user(user_id.clone(), true)
-            .map(with!(this, app => move |u| {
+        let future = self.user(state, user_id.clone(), true)
+            .map(with!(this, state, app => move |u| {
                 if let Some(user) = u {
                     if !this.channels.contains_key(&conv.id) {
-                        this.ensure_user_res(&user);
-                        let mut usr = this.res.user_mut(&user.id).unwrap();
+                        this.ensure_user_res(&state, &user);
+                        let mut usr = this.resources.user_mut(&user.id).unwrap();
                         let chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
                         chn.set_current(conv.status == ConvStatus::Current);
-                        chn.signal_at_top().connect(with!(this, app, cid => move |_| {
-                            this.on_message_demand(&app, &cid)
+                        chn.signal_at_top().connect(with!(this, state, app, cid => move |_| {
+                            this.on_message_demand(&state, &app, &cid)
                         }));
                         this.convlist.add(chn.channel_row());
                         this.channels.insert(conv.id, chn);
@@ -922,10 +924,10 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
-    fn on_contact(&self, app: &gtk::Application, to: User<'static>, contact: Connection) {
+    fn on_contact(&self, state: &State, app: &gtk::Application, to: User<'static>, contact: Connection) {
         debug!(self.log, "on_contact"; "to" => to.id.to_string());
-        self.ensure_user_res(&to);
-        let mut u = self.res.user_mut(&to.id).unwrap();
+        self.ensure_user_res(state, &to);
+        let mut u = self.resources.user_mut(&to.id).unwrap();
         if let Some(mut cont) = self.contacts.get_mut(&to.id) {
             cont.block_handler(true);
             cont.set_status(contact.status);
@@ -935,17 +937,17 @@ impl Coax {
         let this = self.clone();
         let uid  = to.id.clone();
         let cid  = contact.conv.clone();
-        self.contacts.add(&mut u, &contact, with!(app => move |w, s| {
-            this.on_connect_change(&app, w, uid.clone(), cid.clone(), s)
+        self.contacts.add(&mut u, &contact, with!(state, app => move |w, s| {
+            this.on_connect_change(&state, &app, w, uid.clone(), cid.clone(), s)
         }));
     }
 
-    fn on_members_change(&self, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
+    fn on_members_change(&self, state: &State, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
         debug!(self.log, "on_members_change"; "conv" => cid.to_string());
         if let Some(chan) = self.channels.get(&cid) {
             let local = dt.with_timezone(&self.timezone);
             for m in members {
-                if m.id == self.me.borrow().id {
+                if m.id == state.me.id {
                     chan.set_current(s == ConvStatus::Current)
                 }
                 if chan.is_init() {
@@ -972,11 +974,11 @@ impl Coax {
             }
         } else {
             let this   = self.clone();
-            let future = self.conversation(&cid)
-                .map(with!(this, app => move |conv| {
+            let future = self.conversation(&state, &cid)
+                .map(with!(this, state, app => move |conv| {
                     if let Some(c) = conv {
-                        this.on_conversation(&app, c);
-                        this.on_members_change(&app, dt, cid, members, s, from)
+                        this.on_conversation(&state, &app, c);
+                        this.on_members_change(&state, &app, dt, cid, members, s, from)
                     } else {
                         error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
                     }
@@ -988,7 +990,7 @@ impl Coax {
         }
     }
 
-    fn on_new_conv(&self, app: &gtk::Application, name: String, u: UserId) {
+    fn on_new_conv(&self, state: &State, app: &gtk::Application, name: String, u: UserId) {
         trace!(self.log, "on_new_conv");
 
         enum Data<'a> {
@@ -999,7 +1001,7 @@ impl Coax {
         }
 
         let this   = self.clone();
-        let actor  = self.actor_on.clone();
+        let actor  = state.actor_on.clone();
         let future =
             self.pool_on.spawn_fn(move || {
                 let mut actor_guard = actor.lock().unwrap();
@@ -1025,9 +1027,9 @@ impl Coax {
                     Err(Error::Message("invalid app state"))
                 }
             })
-            .map(with!(this, app => move |data| {
+            .map(with!(this, state, app => move |data| {
                 match data {
-                    Data::Conv(c) => this.on_conversation(&app, c),
+                    Data::Conv(c) => this.on_conversation(&state, &app, c),
                     Data::Sent    => show_message(&app, MessageType::Info, "Connection request sent", "", None),
                     Data::NoUser  => show_message(&app, MessageType::Error, "User not found", "", None),
                     Data::Invalid(s) => {
@@ -1043,11 +1045,11 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
-    fn on_connect_change(&self, app: &gtk::Application, s: &gtk::ComboBoxText, uid: UserId, cid: ConvId, new: ConnectStatus) {
+    fn on_connect_change(&self, state: &State, app: &gtk::Application, s: &gtk::ComboBoxText, uid: UserId, cid: ConvId, new: ConnectStatus) {
         debug!(self.log, "on_connect_change"; "user" => uid.to_string());
         s.set_sensitive(false);
         let this   = self.clone();
-        let actor  = self.actor_on.clone();
+        let actor  = state.actor_on.clone();
         let future =
             self.pool_on.spawn_fn(move || {
                 let mut actor_guard = actor.lock().unwrap();
@@ -1057,9 +1059,9 @@ impl Coax {
                     Err(Error::Message("invalid app state"))
                 }
             })
-            .and_then(with!(this, app => move |updated| {
+            .and_then(with!(this, state, app => move |updated| {
                 if updated && new == ConnectStatus::Accepted {
-                    boxed(this.conversation(&cid).map(move |conv| conv.map(|c| this.on_conversation(&app, c))))
+                    boxed(this.conversation(&state, &cid).map(move |conv| conv.map(|c| this.on_conversation(&state, &app, c))))
                 } else {
                     boxed(future::ok(None))
                 }
@@ -1074,9 +1076,9 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
-    fn on_message_demand(&self, app: &gtk::Application, cid: &ConvId) {
+    fn on_message_demand(&self, state: &State, app: &gtk::Application, cid: &ConvId) {
         let logger = self.log.clone();
-        let future = self.load_messages(app, cid)
+        let future = self.load_messages(state, app, cid)
             .map_err(with!(app => move |e| {
                 error!(logger, "failed to load messages"; "error" => format!("{:?}", e));
                 show_error(&app, &e, "Failed to load messages", &format!("{}", e))
@@ -1084,9 +1086,9 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
-    fn on_conversation_demand(&self, app: &gtk::Application) {
+    fn on_conversation_demand(&self, state: &State, app: &gtk::Application) {
         let logger = self.log.clone();
-        let future = self.load_local_conversations(app)
+        let future = self.load_local_conversations(state, app)
             .map_err(with!(app => move |e| {
                 error!(logger, "failed to load conversations"; "error" => format!("{:?}", e));
                 show_error(&app, &e, "Failed to load conversations", &format!("{}", e))
@@ -1094,17 +1096,13 @@ impl Coax {
         self.futures.send(boxed(future)).unwrap()
     }
 
-    fn save_as(&self, app: &gtk::Application, k: AssetKey<'static>, p: PathBuf) {
+    fn save_as(&self, state: &State, app: &gtk::Application, k: AssetKey<'static>, p: PathBuf) {
         trace!(self.log, "save as");
-        let actor  = self.actor_off.clone();
+        let actor  = state.actor_off.clone();
         let logger = self.log.clone();
         let future = self.pool_off.spawn_fn(move || {
-                let mut actor_guard = actor.lock().unwrap();
-                if let Some(ref mut a) = *actor_guard {
-                    a.save_asset_as(&k, &p)
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
+                let mut a = actor.lock().unwrap();
+                a.save_asset_as(&k, &p)
             })
             .map_err(with!(app => move |e| {
                 error!(logger, "failed to save"; "error" => format!("{:?}", e));
@@ -1117,35 +1115,31 @@ impl Coax {
     // Futures
     //
 
-    fn set_image(&self, ast: coax_data::Asset<'static>, c: ConvId, m: String, img: gtk::DrawingArea) -> impl Future<Item=(), Error=Error> {
+    fn set_image(&self, state: &State, ast: coax_data::Asset<'static>, c: ConvId, m: String, img: gtk::DrawingArea) -> impl Future<Item=(), Error=Error> {
         let future =
             if ast.status == AssetStatus::Local {
                 let aid   = ast.id.clone();
-                let actor = self.actor_off.clone();
+                let actor = state.actor_off.clone();
                 self.pool_off.spawn_fn(move || {
+                    let mut a = actor.lock().unwrap();
+                    Ok(a.asset_path(&aid))
+                })
+            } else {
+                let actor = state.actor_on.clone();
+                self.pool_on.spawn_fn(move || {
                     let mut actor_guard = actor.lock().unwrap();
                     if let Some(ref mut a) = *actor_guard {
-                        Ok(a.asset_path(&aid))
+                        a.download_asset(&ast.id, ast.token.as_ref())?;
+                        a.decrypt_asset(&ast.id, &ast.cksum, &ast.key)?;
+                        Ok(a.asset_path(&ast.id))
                     } else {
                         Err(Error::Message("invalid app state"))
                     }
                 })
-            } else {
-                let actor = self.actor_on.clone();
-                self.pool_on.spawn_fn(move || {
-                        let mut actor_guard = actor.lock().unwrap();
-                        if let Some(ref mut a) = *actor_guard {
-                            a.download_asset(&ast.id, ast.token.as_ref())?;
-                            a.decrypt_asset(&ast.id, &ast.cksum, &ast.key)?;
-                            Ok(a.asset_path(&ast.id))
-                        } else {
-                            Err(Error::Message("invalid app state"))
-                        }
-                    })
             };
-        let this = self.clone();
+        let channels = self.channels.clone();
         future.map(move |path| {
-            if let Some(ch) = this.channels.get(&c) {
+            if let Some(ch) = channels.get(&c) {
                 ch.get_msg(&m).map(|msg| if let Message::Image(ref m) = *msg { m.stop_spinner() });
             }
             let buf    = Pixbuf::new_from_file(path.to_string_lossy().as_ref()).unwrap(); // TODO
@@ -1171,13 +1165,12 @@ impl Coax {
         })
     }
 
-    fn set_user_icon(&self, u: UserId) -> impl Future<Item=(), Error=Error> {
+    fn set_user_icon(&self, state: &State, u: UserId) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "set user icon"; "id" => u.to_string());
         let future =
-            if self.complete.load(Ordering::Relaxed) {
-                let actor = self.actor_on.clone();
-                self.pool_on.spawn_fn(with!(u => move || {
-                    let mut actor_guard = actor.lock().unwrap();
+            if state.is_online.load(Ordering::Relaxed) {
+                self.pool_on.spawn_fn(with!(state, u => move || {
+                    let mut actor_guard = state.actor_on.lock().unwrap();
                     if let Some(ref mut a) = *actor_guard {
                         if let Some(usr) = a.resolve_user(&u, true)? {
                             a.load_user_icon(&usr)
@@ -1189,17 +1182,12 @@ impl Coax {
                     }
                 }))
             } else {
-                let actor = self.actor_off.clone();
-                self.pool_on.spawn_fn(with!(u => move || {
-                    let mut actor_guard = actor.lock().unwrap();
-                    if let Some(ref mut a) = *actor_guard {
-                        if let Some(usr) = a.load_user(&u)? {
-                            a.load_user_icon(&usr)
-                        } else {
-                            Ok(Vec::new())
-                        }
+                self.pool_off.spawn_fn(with!(state, u => move || {
+                    let mut a = state.actor_off.lock().unwrap();
+                    if let Some(usr) = a.load_user(&u)? {
+                        a.load_user_icon(&usr)
                     } else {
-                        Err(Error::Message("invalid app state"))
+                        Ok(Vec::new())
                     }
                 }))
             };
@@ -1209,7 +1197,7 @@ impl Coax {
                 info!(this.log, "no user icon"; "user" => u.to_string());
                 return ()
             }
-            if let Some(mut user) = this.res.user_mut(&u) {
+            if let Some(mut user) = this.resources.user_mut(&u) {
                 user.set_icon(&data)
             } else {
                 warn!(this.log, "no user resources"; "user" => u.to_string())
@@ -1217,25 +1205,25 @@ impl Coax {
         })
     }
 
-    fn send_confirmation(&self, c: &ConvId, id: &str) -> impl Future<Item=(), Error=Error> {
+    fn send_confirmation(&self, state: &State, c: &ConvId, id: &str) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "send confirmation"; "conv" => c.to_string(), "msg" => id);
         let msg  = MsgBuilder::new().delivered(id).finish();
         let this = self.clone();
-        self.prepare_message(c, msg, Delivery::OneShot)
-            .and_then(with!(this => move |(m, p)| {
-                this.send(p, m, Delivery::OneShot).map(|_| ())
+        self.prepare_message(state, c, msg, Delivery::OneShot)
+            .and_then(with!(this, state => move |(m, p)| {
+                this.send(&state, p, m, Delivery::OneShot).map(|_| ())
             }))
     }
 
-    fn send_message(&self, id: &ConvId, msg: GenericMessage) -> impl Future<Item=(), Error=Error> {
+    fn send_message(&self, state: &State, id: &ConvId, msg: GenericMessage) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "send message"; "conv" => id.to_string(), "id" => msg.get_message_id());
         let this = self.clone();
         let mid  = String::from(msg.get_message_id());
         let text = String::from(msg.get_text().get_content());
-        future::lazy(with!(this, id, mid => move || {
+        future::lazy(with!(this, state, id, mid => move || {
                 if let Some(ch) = this.channels.get(&id) {
-                    this.ensure_user_res(&*this.me.borrow());
-                    let mut usr = this.res.user_mut(&this.me.borrow().id).unwrap();
+                    this.ensure_user_res(&state, &state.me);
+                    let mut usr = this.resources.user_mut(&state.me.id).unwrap();
                     if !ch.has_msg(&mid) {
                         let msg = TextMessage::new(None, &mut usr, &text);
                         msg.start_spinner();
@@ -1244,11 +1232,11 @@ impl Coax {
                 }
                 future::ok(())
             }))
-            .and_then(with!(this, id => move |()| {
-                this.prepare_message(&id, msg, Delivery::Persistent)
+            .and_then(with!(this, state, id => move |()| {
+                this.prepare_message(&state, &id, msg, Delivery::Persistent)
             }))
-            .and_then(with!(this => move |(msg, params)| {
-                this.send(params, msg, Delivery::Persistent)
+            .and_then(with!(this, state => move |(msg, params)| {
+                this.send(&state, params, msg, Delivery::Persistent)
             }))
             .map(with!(this, id, mid => move |dt| {
                 if let Some(ch) = this.channels.get(&id) {
@@ -1284,67 +1272,56 @@ impl Coax {
             }))
     }
 
-    fn load_local_conversations(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
+    fn load_local_conversations(&self, state: &State, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         let this   = self.clone();
-        let actor  = self.actor_off.clone();
-        let pstate = self.ch_state.borrow().clone();
+        let pstate = state.ch_state.lock().unwrap().clone();
         debug!(self.log, "load conversations"; "paging_state" => format!("{:?}", pstate));
-        self.pool_off.spawn_fn(move || {
-                let mut actor_guard = actor.lock().unwrap();
-                if let Some(ref mut a) = *actor_guard {
-                    a.load_conversations(pstate, 64)
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
-            })
-            .map(with!(app => move |page| {
+        self.pool_off.spawn_fn(with!(state => move || {
+                let mut a = state.actor_off.lock().unwrap();
+                a.load_conversations(pstate, 64)
+            }))
+            .map(with!(state, app => move |page| {
                 for c in page.data {
-                    this.on_conversation(&app, c)
+                    this.on_conversation(&state, &app, c)
                 }
-                *this.ch_state.borrow_mut() = Some(page.state);
+                *state.ch_state.lock().unwrap() = Some(page.state);
             }))
     }
 
-    fn load_remote_conversations(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
+    fn load_remote_conversations(&self, state: &State, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "load remote conversations");
         let this = self.clone();
-        let actor= self.actor_on.clone();
-        self.pool_on.spawn_fn(move || {
-                let mut actor_guard = actor.lock().unwrap();
+        self.pool_on.spawn_fn(with!(state => move || {
+                let mut actor_guard = state.actor_on.lock().unwrap();
                 if let Some(ref mut a) = *actor_guard {
                     a.resolve_conversations()
                 } else {
                     Err(Error::Message("invalid app state"))
                 }
-            })
-            .and_then(with!(this, app => move |()| {
-                this.load_local_conversations(&app)
+            }))
+            .and_then(with!(this, state, app => move |()| {
+                this.load_local_conversations(&state, &app)
             }))
     }
 
-    fn load_messages(&self, app: &gtk::Application, cid: &ConvId) -> impl Future<Item=(), Error=Error> {
+    fn load_messages(&self, state: &State, app: &gtk::Application, cid: &ConvId) -> impl Future<Item=(), Error=Error> {
         let this    = self.clone();
-        let actor   = self.actor_off.clone();
         let conv_id = cid.clone();
         let pstate  = self.channels.get(&cid).and_then(|ch| ch.paging_state());
         debug!(self.log, "load conversation messages"; "id" => cid.to_string(), "paging_state" => format!("{:?}", pstate));
-        self.pool_off.spawn_fn(move || {
-                let mut actor_guard = actor.lock().unwrap();
-                if let Some(ref mut a) = *actor_guard {
-                    a.load_messages(&conv_id, pstate, 32)
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
-            })
-            .map(with!(this, cid, app => move |mm| {
+        self.pool_off.spawn_fn(with!(state => move || {
+                let mut a = state.actor_off.lock().unwrap();
+                a.load_messages(&conv_id, pstate, 32)
+            }))
+            .map(with!(this, state, cid, app => move |mm| {
                 if let Some(chan) = this.channels.get(&cid) {
                     for m in mm.data {
                         if chan.has_msg(&m.id) {
                             continue
                         }
-                        this.ensure_user_res(&m.user);
+                        this.ensure_user_res(&state, &m.user);
                         let local   = m.time.with_timezone(&this.timezone);
-                        let mut usr = this.res.user_mut(&m.user.id).unwrap();
+                        let mut usr = this.resources.user_mut(&m.user.id).unwrap();
                         let message = match m.data {
                             MessageData::Text(txt) => {
                                 let mut msg = TextMessage::new(None, &mut usr, &txt);
@@ -1359,11 +1336,11 @@ impl Coax {
                                 let img = gtk::DrawingArea::new();
                                 let msg = Image::new(local, &mut usr, img.clone(), app.get_active_window());
                                 let aid = ast.id.clone();
-                                msg.signal_save().connect(with!(this, app => move |p| {
-                                    this.save_as(&app, aid.clone(), p.clone())
+                                msg.signal_save().connect(with!(this, state, app => move |p| {
+                                    this.save_as(&state, &app, aid.clone(), p.clone())
                                 }));
                                 msg.start_spinner();
-                                let future = this.set_image(ast, cid.clone(), m.id.clone(), img)
+                                let future = this.set_image(&state, ast, cid.clone(), m.id.clone(), img)
                                     .map_err(with!(this => move |e| {
                                         error!(this.log, "failed to set image"; "error" => format!("{:?}", e))
                                     }));
@@ -1387,69 +1364,57 @@ impl Coax {
             }))
     }
 
-    fn load_local_contacts(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
+    fn load_local_contacts(&self, state: &State, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         trace!(self.log, "load contacts");
         let this  = self.clone();
-        let actor = self.actor_off.clone();
-        self.pool_off.spawn_fn(move || {
-                let mut actor_guard = actor.lock().unwrap();
-                if let Some(ref mut a) = *actor_guard {
-                    a.load_contacts()
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
-            })
-            .map(with!(app => move |cc| {
+        self.pool_off.spawn_fn(with!(state => move || {
+                let mut a = state.actor_off.lock().unwrap();
+                a.load_contacts()
+            }))
+            .map(with!(state, app => move |cc| {
                 for (u, c) in cc {
-                    this.on_contact(&app, u, c)
+                    this.on_contact(&state, &app, u, c)
                 }
                 this.contacts.set_init()
             }))
     }
 
-    fn load_remote_contacts(&self, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
+    fn load_remote_contacts(&self, state: &State, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         debug!(self.log, "load remote contacts");
         let this  = self.clone();
-        let actor = self.actor_on.clone();
-        self.pool_on.spawn_fn(move || {
-                let mut actor_guard = actor.lock().unwrap();
+        self.pool_on.spawn_fn(with!(state => move || {
+                let mut actor_guard = state.actor_on.lock().unwrap();
                 if let Some(ref mut a) = *actor_guard {
                     a.resolve_user_connections()
                 } else {
                     Err(Error::Message("invalid app state"))
                 }
-            })
-            .and_then(with!(this, app => move |()| {
-                this.load_local_contacts(&app)
+            }))
+            .and_then(with!(this, state, app => move |()| {
+                this.load_local_contacts(&state, &app)
             }))
     }
 
-    fn prepare_message(&self, id: &ConvId, msg: GenericMessage, del: Delivery) -> impl Future<Item=(GenericMessage, send::Params), Error=Error> {
+    fn prepare_message(&self, state: &State, id: &ConvId, msg: GenericMessage, del: Delivery) -> impl Future<Item=(GenericMessage, send::Params), Error=Error> {
         debug!(self.log, "prepare message future"; "conv" => id.to_string(), "id" => msg.get_message_id());
-        let actor = self.actor_off.clone();
-        self.pool_off.spawn_fn(with!(id => move || {
-            let mut actor_guard = actor.lock().unwrap();
-            if let Some(ref mut a) = *actor_guard {
-                if del != Delivery::OneShot {
-                    a.store_message(&id, &msg)?;
-                }
-                let p = a.prepare_message(&id, &msg)?;
-                a.enqueue(msg.get_message_id().as_bytes(), &p, &msg)?;
-                Ok((msg, p))
-            } else {
-                Err(Error::Message("invalid app state"))
+        self.pool_off.spawn_fn(with!(state, id => move || {
+            let mut a = state.actor_off.lock().unwrap();
+            if del != Delivery::OneShot {
+                a.store_message(&id, &msg)?;
             }
+            let p = a.prepare_message(&id, &msg)?;
+            a.enqueue(msg.get_message_id().as_bytes(), &p, &msg)?;
+            Ok((msg, p))
         }))
     }
 
-    fn send(&self, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<UTC>, Error=Error> {
+    fn send(&self, state: &State, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<UTC>, Error=Error> {
         debug!(self.log, "send future"; "conv" => params.conv.to_string(), "id" => msg.get_message_id());
-        let actor  = self.actor_on.clone();
         let logger = self.log.clone();
-        self.pool_on.spawn_fn(move || {
+        self.pool_on.spawn_fn(with!(state => move || {
             loop {
                 {
-                    let mut actor_guard = actor.lock().unwrap();
+                    let mut actor_guard = state.actor_on.lock().unwrap();
                     if let Some(ref mut a) = *actor_guard {
                         match a.send_message(&mut params, &msg, del) {
                             Ok(dt) => {
@@ -1469,27 +1434,25 @@ impl Coax {
                 }
                 thread::sleep(Duration::from_secs(3))
             }
-        })
+        }))
     }
 
-    fn resend_messages(&self) -> impl Future<Item=(), Error=Error> {
+    fn resend_messages(&self, state: &State) -> impl Future<Item=(), Error=Error> {
         trace!(self.log, "re-send messages future");
-        let actor = self.actor_on.clone();
-        self.pool_on.spawn_fn(move || {
-            let mut actor_guard = actor.lock().unwrap();
+        self.pool_on.spawn_fn(with!(state => move || {
+            let mut actor_guard = state.actor_on.lock().unwrap();
             if let Some(ref mut a) = *actor_guard {
                 a.resend()
             } else {
                 Err(Error::Message("invalid app state"))
             }
-        })
+        }))
     }
 
-    fn conversation(&self, id: &ConvId) -> impl Future<Item=Option<Conversation<'static>>, Error=Error> {
+    fn conversation(&self, state: &State, id: &ConvId) -> impl Future<Item=Option<Conversation<'static>>, Error=Error> {
         trace!(self.log, "load conversation future");
-        let actor = self.actor_on.clone();
-        self.pool_on.spawn_fn(with!(id => move || {
-            let mut actor_guard = actor.lock().unwrap();
+        self.pool_on.spawn_fn(with!(state, id => move || {
+            let mut actor_guard = state.actor_on.lock().unwrap();
             if let Some(ref mut a) = *actor_guard {
                 a.resolve_conversation(&id)
             } else {
@@ -1498,20 +1461,16 @@ impl Coax {
         }))
     }
 
-    fn user(&self, id: UserId, allow_local: bool) -> impl Future<Item=Option<User<'static>>, Error=Error> {
+    fn user(&self, state: &State, id: UserId, allow_local: bool) -> impl Future<Item=Option<User<'static>>, Error=Error> {
         trace!(self.log, "user future");
         if allow_local {
-            let actor_off = self.actor_off.clone();
+            let actor_off = state.actor_off.clone();
             self.pool_off.spawn_fn(move || {
-                let mut actor_guard = actor_off.lock().unwrap();
-                if let Some(ref mut a) = *actor_guard {
-                    a.load_user(&id)
-                } else {
-                    Err(Error::Message("invalid app state"))
-                }
+                let mut a = actor_off.lock().unwrap();
+                a.load_user(&id)
             })
         } else {
-            let actor_on = self.actor_on.clone();
+            let actor_on = state.actor_on.clone();
             self.pool_on.spawn_fn(move || {
                 let mut actor_guard = actor_on.lock().unwrap();
                 if let Some(ref mut a) = *actor_guard {
@@ -1523,25 +1482,23 @@ impl Coax {
         }
     }
 
-    fn notifications(&self, initial: bool) -> impl Future<Item=(), Error=Error> {
+    fn notifications(&self, state: &State, initial: bool) -> impl Future<Item=(), Error=Error> {
         trace!(self.log, "notifications future");
-        let actor   = self.actor_on.clone();
-        let is_sync = self.is_sync.clone();
-        let logger  = self.log.clone();
-        self.pool_on.spawn_fn(move || {
-            let mut actor_guard = actor.lock().unwrap();
+        let logger = self.log.clone();
+        self.pool_on.spawn_fn(with!(state => move || {
+            let mut actor_guard = state.actor_on.lock().unwrap();
             if let Some(ref mut a) = *actor_guard {
-                is_sync.store(true, Ordering::Relaxed);
+                state.is_sync.store(true, Ordering::Relaxed);
                 loop {
                     debug!(logger, "actor getting notifications");
                     match a.notifications(!initial) {
                         Ok(true)  => {}
                         Ok(false) => {
-                            is_sync.store(false, Ordering::Relaxed);
+                            state.is_sync.store(false, Ordering::Relaxed);
                             break
                         }
                         Err(e) => {
-                            is_sync.store(false, Ordering::Relaxed);
+                            state.is_sync.store(false, Ordering::Relaxed);
                             return Err(e)
                         }
                     }
@@ -1550,14 +1507,14 @@ impl Coax {
             } else {
                 Err(Error::Message("invalid app state"))
             }
-        })
+        }))
     }
 
     //
     // Misc
     //
 
-    fn show_new_conv(&self, app: &gtk::Application) {
+    fn show_new_conv(&self, state: &State, app: &gtk::Application) {
         trace!(self.log, "show_new_conv");
         let this = self.clone();
         let builder = Builder::new_from_string(include_str!("gtk/new-conversation.ui"));
@@ -1569,10 +1526,10 @@ impl Coax {
         let name: gtk::Entry = builder.get_object("name-entry").unwrap();
         let user: gtk::Entry = builder.get_object("user-entry").unwrap();
 
-        submit.connect_clicked(with!(this, app, window, name, user => move |_| {
+        submit.connect_clicked(with!(this, state, app, window, name, user => move |_| {
             window.hide();
             if let Some(u) = user.get_text().and_then(|s| UserId::from_str(&s)) {
-                this.on_new_conv(&app, name.get_text().unwrap_or("N/A".into()), u)
+                this.on_new_conv(&state, &app, name.get_text().unwrap_or("N/A".into()), u)
             } else {
                 show_message(&app, MessageType::Error, "Invalid UserId", "", None)
             }
@@ -1582,12 +1539,12 @@ impl Coax {
         window.show_all();
     }
 
-    fn ensure_user_res(&self, u: &User) {
-        if !self.res.has_user(&u.id) {
+    fn ensure_user_res(&self, state: &State, u: &User) {
+        if !self.resources.has_user(&u.id) {
             debug!(self.log, "adding user resources"; "user" => u.id.to_string());
-            self.res.add_user(u);
+            self.resources.add_user(u);
             let logger = self.log.clone();
-            let future = self.set_user_icon(u.id.clone())
+            let future = self.set_user_icon(&state, u.id.clone())
                 .map_err(move |e| {
                     error!(logger, "failed to set user icon"; "error" => format!("{:?}", e));
                 });

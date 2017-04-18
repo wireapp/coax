@@ -80,7 +80,7 @@ impl<'a, S: Stream, T> Connection<'a, S, T> {
 
 impl<'a, S: Stream> Connection<'a, S, Init> {
     pub fn handshake(mut self, u: &Url, headers: &[(Name, Value)]) -> Result<Connection<'a, S, Open>, Error> {
-        trace!(self.log, "handshake"; "url" => u.as_str());
+        trace!(self.log, "handshake"; "url" => %u);
         let n = nonce();
         let h = [(header::SEC_WEBSOCKET_KEY, header::Value::new(n.as_bytes()))];
         let s = HANDSHAKE_HEADERS.iter().chain(headers.iter()).chain(h.iter());
@@ -127,12 +127,12 @@ impl<'a, S: Stream> Connection<'a, S, Init> {
         trace!(self.log, "upgrade");
         let upgrade = self.response.header(header::UPGRADE);
         if !upgrade.as_ref().map(|a| header::eq_ci(a, &header::WEBSOCKET)).unwrap_or(true) {
-            error!(self.log, "invalid upgrade header {:?}", (upgrade.as_ref().and_then(Value::as_str)));
+            error!(self.log, "invalid upgrade header"; "header" => ?upgrade.as_ref().and_then(Value::as_str));
             return Err(Error::Handshake(101, "invalid response header 'upgrade'"))
         }
         let connection = self.response.header(header::CONNECTION);
         if !connection.as_ref().map(|a| header::eq_ci(&a, &header::UPGRADE_VAL)).unwrap_or(true) {
-            error!(self.log, "invalid connection header: {:?}", (connection.as_ref().and_then(Value::as_str)));
+            error!(self.log, "invalid connection header"; "header" => ?connection.as_ref().and_then(Value::as_str));
             return Err(Error::Handshake(101, "invalid response header 'connection'"))
         }
         if let Some(h) = self.response.header(header::SEC_WEBSOCKET_ACCEPT) {
@@ -272,8 +272,8 @@ fn nonce_check(theirs: &[u8], ours: &[u8]) -> Result<bool, Error> {
     let mut h = Hasher::new(MessageDigest::sha1())?;
     h.update(ours)?;
     h.update(MAGIC_UUID.as_bytes())?;
-    let sha1 = h.finish()?;
-    let b64  = sha1.as_slice().to_base64(base64::STANDARD);
+    let sha1 = h.finish2()?;
+    let b64  = sha1.to_base64(base64::STANDARD);
     Ok(b64.as_bytes() == theirs) // TODO: trim theirs
 }
 
@@ -355,7 +355,7 @@ mod tests {
     }
 
     fn test_case(g: &Logger, url: &mut Url, buf: &mut [u8], i: usize) -> Result<(), Error> {
-        debug!(g, "test {}", i);
+        debug!(g, "test"; "number" => i);
         url.set_query(Some(format!("case={}&agent=coax", i).as_str()));
         let mut c = Connection::open_tcp(g, url.clone())?;
         c.handshake(&url, &[])?;
@@ -390,7 +390,7 @@ mod tests {
         let mut m = vec![0; 4096];
         for i in 1 .. tests + 1 {
             if let Err(e) = test_case(&root, &mut u, &mut m, i) {
-                error!(root, "error running test {}: {}", i, e)
+                error!(root, "error running test"; "number" => i, "error" => %e)
             }
         }
         update_reports(&root)

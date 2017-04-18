@@ -38,7 +38,7 @@ const PRAGMAS: &'static str =
 
 impl Database {
     pub fn open(g: &Logger, path: &Path) -> Result<Database, Error> {
-        debug!(g, "opening database"; "path" => path.to_string_lossy().as_ref());
+        debug!(g, "opening database"; "path" => ?path);
         let p = path.to_str().ok_or(Error::InvalidPath)?;
         let c = SqliteConnection::establish(p)?;
         let db = Database {
@@ -50,7 +50,7 @@ impl Database {
     }
 
     pub fn run_migrations(g: &Logger, path: &Path) -> Result<(), Error> {
-        debug!(g, "running pending database migrations"; "path" => path.to_string_lossy().as_ref());
+        debug!(g, "running pending database migrations"; "path" => ?path);
         let p = path.to_str().ok_or(Error::InvalidPath)?;
         let c = SqliteConnection::establish(p)?;
         c.batch_execute(schema::SCHEMA)?;
@@ -61,7 +61,7 @@ impl Database {
 
     pub fn has_notification(&self, nid: &NotifId) -> Result<bool, Error> {
         use schema::inbox::dsl::*;
-        debug!(self.logger, "has notification?"; "id" => nid.to_string());
+        debug!(self.logger, "has notification?"; "id" => %nid);
         match inbox.find(nid.as_slice()).first::<model::Notification>(&self.conn) {
             Err(result::Error::NotFound) => Ok(false),
             Err(e) => Err(Error::Result(e)),
@@ -70,7 +70,7 @@ impl Database {
     }
 
     pub fn insert_notification(&self, nid: &NotifId) -> Result<(), Error> {
-        debug!(self.logger, "insert notification"; "id" => nid.to_string());
+        debug!(self.logger, "insert notification"; "id" => %nid);
         let n = NewNotification { id: nid.as_slice() };
         insert_or_replace(&n).into(schema::inbox::table).execute(&self.conn)?;
         Ok(())
@@ -86,14 +86,14 @@ impl Database {
     }
 
     pub fn set_last_notification(&self, i: &NotifId) -> Result<(), Error> {
-        debug!(self.logger, "set last notification"; "id" => i.to_string());
+        debug!(self.logger, "set last notification"; "id" => %i);
         self.set_var("last-notif", i.as_bytes())?;
         Ok(())
     }
 
     pub fn user<'a>(&self, uid: &UserId) -> Result<Option<model::User<'a>>, Error> {
         use schema::users::dsl::*;
-        debug!(self.logger, "select"; "user" => uid.to_string());
+        debug!(self.logger, "select"; "user" => %uid);
         match users.find(uid.as_slice()).first::<RawUser>(&self.conn) {
             Err(result::Error::NotFound) => Ok(None),
             Err(e) => Err(Error::Result(e)),
@@ -103,7 +103,7 @@ impl Database {
 
     pub fn insert_user(&self, u: &api::user::User) -> Result<(), Error> {
         use schema::users::dsl::*;
-        debug!(self.logger, "insert"; "user" => u.id.to_string());
+        debug!(self.logger, "insert"; "user" => %u.id);
         let nu = NewUser::from_api(u);
         self.conn.transaction(|| {
             match users.find(u.id.as_slice()).first::<RawUser>(&self.conn) {
@@ -121,7 +121,7 @@ impl Database {
 
     pub fn client<'a>(&self, uid: &UserId, cid: &ClientId) -> Result<Option<model::Client<'a>>, Error> {
         use schema::clients::dsl::*;
-        debug!(self.logger, "select"; "user" => uid.to_string(), "client" => cid.as_str());
+        debug!(self.logger, "select"; "user" => %uid, "client" => %cid);
         let source = clients
             .filter(user.eq(uid.as_slice()))
             .filter(id.eq(cid.as_str()));
@@ -134,7 +134,7 @@ impl Database {
 
     pub fn clients<'a>(&self, uid: &UserId) -> Result<Vec<model::Client<'a>>, Error> {
         use schema::clients::dsl::*;
-        debug!(self.logger, "select clients"; "user" => uid.to_string());
+        debug!(self.logger, "select clients"; "user" => %uid);
         let source = clients
             .filter(user.eq(uid.as_slice()));
         match source.load::<RawClient>(&self.conn) {
@@ -152,7 +152,7 @@ impl Database {
 
     pub fn insert_client(&self, u: &UserId, c: &api::client::Client) -> Result<(), Error> {
         use schema::clients::dsl::*;
-        debug!(self.logger, "insert"; "user" => u.to_string(), "client" => c.id.as_str());
+        debug!(self.logger, "insert"; "user" => %u, "client" => %c.id);
         let nc = NewClient::from_api(u, c, false);
         self.conn.transaction(|| {
             // TODO: upsert
@@ -168,7 +168,7 @@ impl Database {
     }
 
     pub fn insert_clients(&self, u: &UserId, cs: &[api::client::Client]) -> Result<(), Error> {
-        debug!(self.logger, "insert clients"; "user" => u.to_string());
+        debug!(self.logger, "insert clients"; "user" => %u);
         // TODO: upsert
         for c in cs {
             self.insert_client(u, c)?
@@ -183,7 +183,7 @@ impl Database {
 
     pub fn connection<'a>(&self, uid: &UserId) -> Result<Option<(model::Connection, model::User<'a>)>, Error> {
         use schema::connections::dsl::*;
-        debug!(self.logger, "select connection"; "to" => uid.to_string());
+        debug!(self.logger, "select connection"; "to" => %uid);
         let source = connections
             .inner_join(schema::users::table)
             .filter(id.eq(uid.as_slice()));
@@ -221,7 +221,7 @@ impl Database {
     }
 
     pub fn insert_connection(&self, c: &api::user::Connection) -> Result<(), Error> {
-        debug!(self.logger, "insert"; "connection" => c.to.to_string());
+        debug!(self.logger, "insert"; "connection" => %c.to);
         let nc = NewConnection::from_api(c);
         insert_or_replace(&nc).into(schema::connections::table).execute(&self.conn)?;
         Ok(())
@@ -229,7 +229,7 @@ impl Database {
 
     pub fn update_connection(&self, uid: &UserId, s: ConnectStatus) -> Result<bool, Error> {
         use schema::connections::dsl::*;
-        debug!(self.logger, "updating connection"; "to" => uid.to_string(), "status" => s.as_str());
+        debug!(self.logger, "updating connection"; "to" => %uid, "status" => ?s);
         let val = s.into() : u8 as i16;
         update(connections.find(uid.as_slice()))
             .set(status.eq(val))
@@ -240,7 +240,7 @@ impl Database {
 
     pub fn conversation<'a>(&self, cid: &ConvId) -> Result<Option<model::Conversation<'a>>, Error> {
         use schema::conversations::dsl::*;
-        debug!(self.logger, "select"; "conv" => cid.to_string());
+        debug!(self.logger, "select"; "conv" => %cid);
         let source = conversations.find(cid.as_slice());
         match source.first::<RawConversation>(&self.conn) {
             Err(result::Error::NotFound) => Ok(None),
@@ -291,7 +291,7 @@ impl Database {
 
     pub fn update_conv_status(&self, cid: &ConvId, s: ConvStatus) -> Result<bool, Error> {
         use schema::conversations::dsl::*;
-        debug!(self.logger, "updating conversation status"; "value" => format!("{:?}", s));
+        debug!(self.logger, "updating conversation status"; "value" => ?s);
         update(conversations.find(cid.as_slice()))
             .set(status.eq(s as i16))
             .execute(&self.conn)
@@ -301,7 +301,7 @@ impl Database {
 
     pub fn insert_conversation(&self, t: &DateTime<UTC>, c: &api::conv::Conversation) -> Result<(), Error> {
         use schema::conversations::dsl::*;
-        debug!(self.logger, "insert"; "conv" => c.id.to_string());
+        debug!(self.logger, "insert"; "conv" => %c.id);
         let ci = c.id.as_slice();
         let mut mm = c.members.others.iter()
             .map(|m| NewMember { id: m.id.as_slice(), conv: ci })
@@ -325,7 +325,7 @@ impl Database {
 
     pub fn member_ids(&self, cid: &ConvId) -> Result<Vec<UserId>, Error> {
         use schema::members::dsl::*;
-        debug!(self.logger, "select member ids"; "conv" => cid.to_string());
+        debug!(self.logger, "select member ids"; "conv" => %cid);
         let source = members
             .filter(conv.eq(cid.as_slice()))
             .select(id);
@@ -343,7 +343,7 @@ impl Database {
     }
 
     pub fn insert_members(&self, cid: &ConvId, users: &[&UserId]) -> Result<(), Error> {
-        debug!(self.logger, "insert members"; "conv" => cid.to_string());
+        debug!(self.logger, "insert members"; "conv" => %cid);
         let mm: Vec<NewMember> = users.iter()
             .map(|u| NewMember { id: u.as_slice(), conv: cid.as_slice() })
             .collect();
@@ -353,7 +353,7 @@ impl Database {
 
     pub fn remove_members(&self, cid: &ConvId, users: &[&UserId]) -> Result<(), Error> {
         use schema::members::dsl::*;
-        debug!(self.logger, "remove members"; "conv" => cid.to_string());
+        debug!(self.logger, "remove members"; "conv" => %cid);
         let condition = conv.eq(cid.as_slice())
             .and(id.eq_any(users.iter().map(|uid| uid.as_slice())));
         delete(members.filter(condition)).execute(&self.conn)?;
@@ -362,7 +362,7 @@ impl Database {
 
     pub fn members<'a>(&self, cid: &ConvId) -> Result<Vec<model::User<'a>>, Error> {
         use schema::members::dsl::*;
-        debug!(self.logger, "select members"; "conv" => cid.to_string());
+        debug!(self.logger, "select members"; "conv" => %cid);
         // many to many joins are not supported yet (cf. diesel issue #398)
         let source = members
             .filter(conv.eq(cid.as_slice()))
@@ -385,7 +385,7 @@ impl Database {
     pub fn messages<'a>(&self, cid: &ConvId, from: Option<PagingState<M>>, lim: usize) -> Result<Page<Vec<model::Message<'a>>, M>, Error> {
         use schema::users;
         use schema::messages::dsl::*;
-        debug!(self.logger, "select messages"; "conv" => cid.to_string());
+        debug!(self.logger, "select messages"; "conv" => %cid);
         let mut source = messages
             .inner_join(users::table)
             .filter(conv.eq(cid.as_slice()))
@@ -412,7 +412,7 @@ impl Database {
                         None            => vec.push(m.to_message(s.to_user()?, None, a)?),
                         Some(Some(uid)) => vec.push(m.to_message(s.to_user()?, self.user(&uid)?, a)?),
                         Some(None)      => {
-                            error!(self.logger, "invalid messages.user_id"; "conv" => cid.to_string());
+                            error!(self.logger, "invalid messages.user_id"; "conv" => %cid);
                             return Err(Error::InvalidData("messages.user_id"))
                         }
                     }
@@ -425,7 +425,7 @@ impl Database {
 
     pub fn insert_message(&self, nm: &model::NewMessage) -> Result<(), Error> {
         debug!(self.logger, "insert message";
-               "conv"   => ConvId::from_bytes(nm.conv).as_ref().map(ConvId::to_string).unwrap_or("???".into()),
+               "conv"   => ?ConvId::from_bytes(nm.conv),
                "id"     => nm.id,
                "status" => nm.status);
         insert_or_replace(nm).into(schema::messages::table).execute(&self.conn)?;
@@ -434,7 +434,7 @@ impl Database {
 
     pub fn update_message_status(&self, cid: &ConvId, mid: &str, s: MessageStatus) -> Result<bool, Error> {
         use schema::messages::dsl::*;
-        debug!(self.logger, "updating message status"; "id" => mid, "status" => format!("{:?}", s));
+        debug!(self.logger, "updating message status"; "id" => mid, "status" => ?s);
         update(messages.find((cid.as_slice(), mid)))
             .set(status.eq(s as i16))
             .execute(&self.conn)
@@ -465,7 +465,7 @@ impl Database {
 
     pub fn asset<'a>(&self, aid: &AssetKey) -> Result<Option<model::Asset<'a>>, Error> {
         use schema::assets::dsl::*;
-        debug!(self.logger, "select asset"; "id" => aid.as_str());
+        debug!(self.logger, "select asset"; "id" => %aid);
         match assets.find(aid.as_str()).first::<RawAsset>(&self.conn) {
             Err(result::Error::NotFound) => Ok(None),
             Err(e)                       => Err(Error::Result(e)),
@@ -481,7 +481,7 @@ impl Database {
 
     pub fn update_asset_status(&self, k: &AssetKey, s: AssetStatus) -> Result<bool, Error> {
         use schema::assets::dsl::*;
-        debug!(self.logger, "updating asset status"; "id" => k.as_str(), "status" => format!("{:?}", s));
+        debug!(self.logger, "updating asset status"; "id" => %k, "status" => ?s);
         update(assets.find(k.as_str()))
             .set(status.eq(s as i16))
             .execute(&self.conn)
@@ -510,8 +510,8 @@ impl Database {
 
     pub fn enqueue_message(&self, id: &[u8], conv: &ConvId, data: &[u8], msg: &[u8]) -> Result<(), Error> {
         debug!(self.logger, "add message to outbox";
-               "id"   => format!("{}", String::from_utf8_lossy(id)),
-               "conv" => conv.to_string());
+               "id"   => %String::from_utf8_lossy(id),
+               "conv" => %conv);
         let item = NewQueueItem {
             id:   id,
             conv: conv.as_slice(),
@@ -526,17 +526,15 @@ impl Database {
     pub fn dequeue(&self, id: &[u8], conv: &ConvId) -> Result<(), Error> {
         use schema::outbox::dsl::outbox;
         debug!(self.logger, "remove from outbox";
-               "id"   => format!("{}", String::from_utf8_lossy(id)),
-               "conv" => conv.to_string());
+               "id"   => %String::from_utf8_lossy(id),
+               "conv" => %conv);
         delete(outbox.find((conv.as_slice(), id))).execute(&self.conn)?;
         Ok(())
     }
 
     pub fn queue_items(&self, from: Option<PagingState<Q>>, num: usize) -> Result<Page<Vec<QueueItem>, Q>, Error> {
         use schema::outbox::dsl::*;
-        debug!(self.logger, "select outbox items";
-            "size"         => num,
-            "paging-state" => from.as_ref().map(|p| p.state).unwrap_or(-1));
+        debug!(self.logger, "select outbox items"; "size" => num, "paging-state" => ?from);
         let mut source = outbox
             .limit(num as i64)
             .order(sql::<BigInt>("outbox.rowid").asc())

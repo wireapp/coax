@@ -27,7 +27,7 @@ pub struct Listener<'a, S: Stream> {
 impl<'a> Listener<'a, TlsStream> {
     pub fn open_wss(g: &Logger, u: Url, dom: &str, ctx: Arc<Tls>, tkn: &AccessToken) -> Result<Listener<'a, TlsStream>, Error<Void>> {
         let log = g.new(o!("context" => "Listener"));
-        debug!(log, "open websocket (tls)"; "url" => u.as_str());
+        debug!(log, "open websocket (tls)"; "url" => %u);
         let mut w = ws::Connection::open_tls(&log, &u, dom, &*ctx)?;
         w.set_read_timeout(Some(Duration::from_secs(5)))?;
         w.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -62,7 +62,7 @@ impl<'a> Listener<'a, TlsStream> {
 impl<'a> Listener<'a, TcpStream> {
     pub fn open_ws(g: &Logger, u: Url) -> Result<Listener<'a, TcpStream>, Error<Void>> {
         let log = g.new(o!("context" => "Listener"));
-        debug!(log, "open websocket (tcp)"; "url" => u.as_str());
+        debug!(log, "open websocket (tcp)"; "url" => %u);
         let mut w = ws::Connection::open_tcp(&log, &u)?;
         w.set_read_timeout(Some(Duration::from_secs(15)))?;
         w.set_write_timeout(Some(Duration::from_secs(5)))?;
@@ -98,7 +98,7 @@ impl<'a, S: Stream> Listener<'a, S> {
             d.from_json()?
         };
         if let Some(e) = a.take_error() {
-            error!(self.log, "read error: {}", e);
+            error!(self.log, "read error"; "error" => %e);
             match e {
                 ReadError::InvalidUtf8 => Err(Error::Utf8),
                 ReadError::Io(e)       => Err(Error::Io(e))

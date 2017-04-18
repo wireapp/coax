@@ -423,7 +423,7 @@ impl Actor<Offline> {
     }
 
     pub fn load_messages<'a>(&mut self, cid: &ConvId, from: Option<PagingState<db::M>>, num: usize) -> Result<db::Page<Vec<data::Message<'a>>, db::M>, Error> {
-        debug!(self.logger, "loading conversation messages"; "id" => cid.to_string());
+        debug!(self.logger, "loading conversation messages"; "id" => %cid);
         self.state.user.dbase.messages(cid, from, num).map_err(From::from)
     }
 
@@ -433,7 +433,7 @@ impl Actor<Offline> {
     }
 
     pub fn load_user<'a>(&mut self, id: &UserId) -> Result<Option<User<'a>>, Error> {
-        debug!(self.logger, "loading user"; "id" => id.to_string());
+        debug!(self.logger, "loading user"; "id" => %id);
         self.state.user.dbase.user(id).map_err(Error::Database)
     }
 
@@ -442,11 +442,11 @@ impl Actor<Offline> {
     }
 
     pub fn load_user_icon(&mut self, u: &User) -> Result<Vec<u8>, Error> {
-        debug!(self.logger, "loading user icon"; "id" => u.id.to_string());
+        debug!(self.logger, "loading user icon"; "id" => %u.id);
         if let Some(ref i) = u.icon {
             self.state.user.assets.push(i.as_str());
             let file: Result<Option<File>, Error> = {
-                debug!(self.logger, "reading asset (locally)"; "key" => i.as_str());
+                debug!(self.logger, "reading asset (locally)"; "key" => %i);
                 if self.state.user.assets.exists() {
                     File::open(&self.state.user.assets).map(Some).map_err(From::from)
                 } else {
@@ -466,18 +466,18 @@ impl Actor<Offline> {
 
     /// Store as new message in database.
     pub fn store_message(&mut self, cid: &ConvId, msg: &GenericMessage) -> Result<(), Error> {
-        debug!(self.logger, "store message"; "conv" => cid.to_string(), "id" => msg.get_message_id());
+        debug!(self.logger, "store message"; "conv" => %cid, "id" => msg.get_message_id());
         save_message(&self.state.user.dbase, cid, &self.me().id, &self.state.user.device.client.id, msg)
     }
 
     pub fn enqueue(&mut self, id: &[u8], p: &send::Params, msg: &GenericMessage) -> Result<(), Error> {
-        debug!(self.logger, "enqueue"; "conv" => p.conv.to_string(), "msg" => str::from_utf8(id).unwrap_or("N/A"));
+        debug!(self.logger, "enqueue"; "conv" => %p.conv, "msg" => str::from_utf8(id).unwrap_or("N/A"));
         enqueue_message(&self.state.user.dbase, id, p, msg)
     }
 
     /// Encrypt message for conversation members.
     pub fn prepare_message(&mut self, cid: &ConvId, msg: &GenericMessage) -> Result<send::Params, Error> {
-        debug!(self.logger, "preparing message"; "conv" => cid.to_string(), "id" => msg.get_message_id());
+        debug!(self.logger, "preparing message"; "conv" => %cid, "id" => msg.get_message_id());
 
         let mut params = send::Params::new(cid.clone(), self.state.user.device.client.id.acquire());
         let msg_bytes  = msg.write_to_bytes()?;
@@ -500,7 +500,7 @@ impl Actor<Offline> {
     }
 
     pub fn save_asset_as(&mut self, k: &AssetKey, p: &Path) -> Result<(), Error> {
-        debug!(self.logger, "saving asset"; "key" => k.as_str(), "file" => format!("{:?}", p));
+        debug!(self.logger, "saving asset"; "key" => %k, "file" => ?p);
         let src = self.state.user.assets.join(k.as_str());
         fs::copy(&src, p)?;
         Ok(())
@@ -597,10 +597,10 @@ impl Actor<Online> {
     }
 
     pub fn download_asset(&mut self, k: &AssetKey, t: Option<&AssetToken>) -> Result<(), Error> {
-        debug!(self.logger, "downloading asset"; "key" => k.as_str());
+        debug!(self.logger, "downloading asset"; "key" => %k);
         self.state.user.assets.push(k.as_str());
         if self.state.user.assets.exists() {
-            debug!(self.logger, "asset already downloaded"; "key" => k.as_str());
+            debug!(self.logger, "asset already downloaded"; "key" => %k);
             self.state.user.assets.pop();
             return Ok(())
         }
@@ -608,7 +608,7 @@ impl Actor<Online> {
             self.react(r)?;
             let creds = self.state.user.creds.lock().unwrap();
             let url = self.state.client.asset_url(k, t, &creds.token)?;
-            debug!(self.logger, "fetching asset"; "url" => format!("{}", url));
+            debug!(self.logger, "fetching asset"; "url" => %url);
             let dom = url.host_str().ok_or(Error::Message("missing host in asset url"))?;
             let (mut rpc, tkn) = self.state.client.prepare_download(&url, dom)?;
             if rpc.response().status() != 200 {
@@ -629,7 +629,7 @@ impl Actor<Online> {
     }
 
     pub fn save_asset_as(&mut self, k: &AssetKey, p: &Path) -> Result<(), Error> {
-        debug!(self.logger, "saving asset"; "key" => k.as_str(), "file" => format!("{:?}", p));
+        debug!(self.logger, "saving asset"; "key" => %k, "file" => ?p);
         let src = self.state.user.assets.join(k.as_str());
         fs::copy(&src, p)?;
         Ok(())
@@ -646,8 +646,8 @@ impl Actor<Online> {
         };
         let mut h = Hasher::new(MessageDigest::sha256())?;
         h.update(&input)?;
-        let sha256 = h.finish()?;
-        if sha256 != cksum {
+        let sha256 = h.finish2()?;
+        if sha256.as_ref() != cksum {
             return Err(Error::Message("asset checksum check failed"))
         }
         if input.len() < 16 || input.len() % 8 != 0 {
@@ -671,7 +671,7 @@ impl Actor<Online> {
     }
 
     pub fn load_user_icon(&mut self, u: &User) -> Result<Vec<u8>, Error> {
-        debug!(&self.logger, "loading user icon"; "id" => u.id.to_string());
+        debug!(&self.logger, "loading user icon"; "id" => %u.id);
         if let Some(ref i) = u.icon {
             self.download_asset(i, None)?;
             let mut file = {
@@ -717,7 +717,7 @@ impl Actor<Online> {
                 Ok(Some(User::from_api(u)))
             }
         } else {
-            warn!(self.logger, "user not found"; "id" => id.to_string());
+            warn!(self.logger, "user not found"; "id" => %id);
             Ok(None)
         }
     }
@@ -740,7 +740,7 @@ impl Actor<Online> {
             self.state.user.dbase.insert_client(uid, &c)?;
             Ok(Some(data::Client::from_api(uid.clone(), c, false)))
         } else {
-            warn!(self.logger, "client not found"; "user" => uid.to_string(), "id" => cid.as_str());
+            warn!(self.logger, "client not found"; "user" => %uid, "id" => %cid);
             Ok(None)
         }
     }
@@ -805,7 +805,7 @@ impl Actor<Online> {
                     nobody_left &= self.resolve_user(&m.id, true)?.is_none()
                 }
                 if c.typ == ConvType::OneToOne && nobody_left {
-                    info!(self.logger, "ignoring 1:1 conversation without peer"; "conv" => c.id.to_string());
+                    info!(self.logger, "ignoring 1:1 conversation without peer"; "conv" => %c.id);
                     return Ok(None)
                 }
                 let t = UTC::now();
@@ -813,11 +813,11 @@ impl Actor<Online> {
                 Ok(Some(Conversation::from_api(t, c)))
             }
             LookupResult::NotFound => {
-                info!(self.logger, "conversation not found"; "id" => id.to_string());
+                info!(self.logger, "conversation not found"; "id" => %id);
                 Ok(None)
             }
             LookupResult::PastMember => {
-                debug!(self.logger, "past member of conversation"; "id" => id.to_string());
+                debug!(self.logger, "past member of conversation"; "id" => %id);
                 Ok(None)
             }
         }
@@ -954,12 +954,12 @@ impl Actor<Online> {
 
     /// Encrypt message for conversation members.
     pub fn prepare_message(&mut self, cid: &ConvId, msg: &GenericMessage) -> Result<send::Params, Error> {
-        debug!(self.logger, "preparing message"; "conv" => cid.to_string(), "id" => msg.get_message_id());
+        debug!(self.logger, "preparing message"; "conv" => %cid, "id" => msg.get_message_id());
         let conv =
             if let Some(c) = self.resolve_conversation(cid)? {
                 c
             } else {
-                warn!(self.logger, "conversation does not exist"; "id" => cid.to_string());
+                warn!(self.logger, "conversation does not exist"; "id" => %cid);
                 return Err(Error::Message("conversation does not exist"))
             };
 
@@ -983,17 +983,17 @@ impl Actor<Online> {
 
     /// Store as new message in database.
     pub fn store_message(&mut self, cid: &ConvId, msg: &GenericMessage) -> Result<(), Error> {
-        debug!(self.logger, "store message"; "conv" => cid.to_string(), "id" => msg.get_message_id());
+        debug!(self.logger, "store message"; "conv" => %cid, "id" => msg.get_message_id());
         save_message(&self.state.user.dbase, cid, &self.me().id, &self.state.user.device.client.id, msg)
     }
 
     pub fn enqueue(&mut self, id: &[u8], p: &send::Params, msg: &GenericMessage) -> Result<(), Error> {
-        debug!(self.logger, "enqueue"; "conv" => p.conv.to_string(), "msg" => str::from_utf8(id).unwrap_or("N/A"));
+        debug!(self.logger, "enqueue"; "conv" => %p.conv, "msg" => str::from_utf8(id).unwrap_or("N/A"));
         enqueue_message(&self.state.user.dbase, id, p, msg)
     }
 
     pub fn dequeue(&mut self, id: &[u8], conv: &ConvId) -> Result<(), Error> {
-        debug!(self.logger, "dequeue"; "conv" => conv.to_string(), "msg" => str::from_utf8(id).unwrap_or("N/A"));
+        debug!(self.logger, "dequeue"; "conv" => %conv, "msg" => str::from_utf8(id).unwrap_or("N/A"));
         self.state.user.dbase.dequeue(id, conv)?;
         Ok(())
     }
@@ -1008,7 +1008,7 @@ impl Actor<Online> {
         let mut p = self.queue(None, page_size)?;
         loop {
             let n = p.data.len();
-            debug!(self.logger, "{} item(s) read from queue (page size = {})", n, page_size);
+            debug!(self.logger, "{} item(s) read from queue", n; "page-size" => page_size);
             for q in p.data {
                 match q.data {
                     QueueItemData::Msg { data, mesg } => {
@@ -1045,7 +1045,7 @@ impl Actor<Online> {
 
     /// Send a message to some conversation.
     pub fn send_message(&mut self, params: &mut send::Params, msg: &GenericMessage, del: Delivery) -> Result<DateTime<UTC>, Error> {
-        debug!(self.logger, "sending message"; "conv" => params.conv.to_string(), "id" => msg.get_message_id());
+        debug!(self.logger, "sending message"; "conv" => %params.conv, "id" => msg.get_message_id());
         let on_error = |_, e| {
             if error::is_unauthorised(&e) {
                 return React::Renew
@@ -1091,7 +1091,7 @@ impl Actor<Online> {
             let res = self.prepare_message(&c, &msg)
                 .and_then(|mut p| self.send_message(&mut p, &msg, Delivery::OneShot));
             if let Err(e) = res {
-                error!(self.logger, "error sending confirmation message"; "error" => format!("{:?}", e))
+                error!(self.logger, "error sending confirmation message"; "error" => ?e)
             }
         }
     }
@@ -1102,7 +1102,7 @@ impl Actor<Online> {
     }
 
     pub fn load_messages<'a>(&mut self, cid: &ConvId, from: Option<PagingState<db::M>>, num: usize) -> Result<db::Page<Vec<data::Message<'a>>, db::M>, Error> {
-        debug!(self.logger, "loading conversation messages"; "id" => cid.to_string());
+        debug!(self.logger, "loading conversation messages"; "id" => %cid);
         self.state.user.dbase.messages(cid, from, num).map_err(From::from)
     }
 
@@ -1114,7 +1114,7 @@ impl Actor<Online> {
     /// Check for new notifications at back-end.
     pub fn notifications(&mut self, always: bool) -> Result<bool, Error> {
         let mut last_id = self.state.user.dbase.last_notification()?;
-        debug!(self.logger, "last notification"; "id" => last_id.as_ref().map(|i| i.to_string()));
+        debug!(self.logger, "last notification"; "id" => ?last_id);
         let mut client = error::retry3x(|r: Option<React<()>>| {
             self.react(r)?;
             self.connect()
@@ -1155,9 +1155,7 @@ impl Actor<Online> {
                                 last_id = Some(n.id.clone());
                                 self.on_notification(n, Some(&mut to_confirm))?
                             }
-                            Err(e) => error!(self.logger, "failed to parse notification";
-                                "prev"  => last_id.as_ref().map(|id| id.to_string()).unwrap_or("N/A".into()),
-                                "error" => format!("{:?}", e))
+                            Err(e) => error!(self.logger, "failed to parse notification"; "prev" => ?last_id, "error" => ?e)
                         }
                     }
                     more = iter.has_more()?;
@@ -1175,15 +1173,15 @@ impl Actor<Online> {
     }
 
     fn on_notification(&mut self, n: Notification<'static>, mut to_confirm: Option<&mut HashMap<ConvId, Builder<Confirm>>>) -> Result<(), Error> {
-        debug!(self.logger, "notification"; "id" => n.id.to_string());
+        debug!(self.logger, "notification"; "id" => %n.id);
         if self.state.user.dbase.has_notification(&n.id)? {
-            debug!(self.logger, "notification already seen"; "id" => n.id.to_string());
+            debug!(self.logger, "notification already seen"; "id" => %n.id);
             return Ok(())
         }
         for e in n.events {
             match e {
                 Ok(Event::User(ety, e)) => {
-                    debug!(self.logger, "event"; "type" => format!("{:?}", ety));
+                    debug!(self.logger, "event"; "type" => ?ety);
                     match ety {
                         EventType::UserClientAdd  => self.on_client_add(e)?,
                         EventType::UserConnection => self.on_user_connection(e)?,
@@ -1191,7 +1189,7 @@ impl Actor<Online> {
                     }
                 }
                 Ok(Event::Conv(ety, e)) => {
-                    debug!(self.logger, "event"; "type" => format!("{:?}", ety));
+                    debug!(self.logger, "event"; "type" => ?ety);
                     match ety {
                         EventType::ConvCreate      => self.on_conv_create(e)?,
                         EventType::ConvMemberJoin  => self.on_members_change(e)?,
@@ -1201,12 +1199,10 @@ impl Actor<Online> {
                     }
                 }
                 Ok(Event::Unknown(e)) => {
-                    warn!(self.logger, "unknown event: {:?}", e)
+                    warn!(self.logger, "unknown event"; "event" => ?e)
                 }
                 Err(e) => {
-                    error!(self.logger, "could not parse notification event";
-                           "notification" => n.id.to_string(),
-                           "error"        => format!("{:?}", e))
+                    error!(self.logger, "could not parse notification event"; "notification" => %n.id, "error" => ?e)
                 }
             }
         }
@@ -1215,7 +1211,7 @@ impl Actor<Online> {
     }
 
     fn on_mismatch(&mut self, cm: ClientMismatch) -> Result<Vec<(UserId, Vec<(ClientId<'static>, CBoxSession<FileStore>)>)>, Error> {
-        debug!(self.logger, "client mismatch"; "clients" => format!("{:?}", cm));
+        debug!(self.logger, "client mismatch"; "clients" => ?cm);
         let prekeys = error::retry3x(|r: Option<React<()>>| {
             self.react(r)?;
             let creds = self.state.user.creds.lock().unwrap();
@@ -1228,9 +1224,7 @@ impl Actor<Online> {
             for (c, k) in cc {
                 self.resolve_client(&u, &c)?;
                 if let Some(pk) = k {
-                    debug!(self.logger, "new cbox session from prekey";
-                        "user"   => u.to_string(),
-                        "client" => c.as_str());
+                    debug!(self.logger, "new cbox session from prekey"; "user" => %u, "client" => %c);
                     let sid = api::new_session_id(&u, &c);
                     let s = self.state.user.device.cbox.session_from_prekey(sid, pk.key)?;
                     cvec.push((c, s))
@@ -1243,7 +1237,7 @@ impl Actor<Online> {
 
     fn on_client_add(&self, e: UserEvent) -> Result<(), Error> {
         if let UserEvent::AddClient(c) = e {
-            debug!(self.logger, "adding client"; "id" => c.id.as_str());
+            debug!(self.logger, "adding client"; "id" => %c.id);
             if c.id != self.state.user.device.client.id {
                 self.state.user.dbase.insert_client(&self.me().id, &c)?;
             }
@@ -1253,12 +1247,12 @@ impl Actor<Online> {
 
     fn on_user_connection(&mut self, e: UserEvent<'static>) -> Result<(), Error> {
         if let UserEvent::Connect(_, c) = e {
-            debug!(self.logger, "user connection"; "to" => c.to.to_string(), "status" => c.status.as_str());
+            debug!(self.logger, "user connection"; "to" => %c.to, "status" => c.status.as_str());
             if let Some(usr) = self.resolve_user(&c.to, true)? {
                 self.state.user.dbase.insert_connection(&c)?;
                 self.state.bcast.send(Pkg::Contact(usr, Connection::from_api(c))).unwrap()
             } else {
-                warn!(self.logger, "user connection peer not found"; "user" => c.to.to_string())
+                warn!(self.logger, "user connection peer not found"; "user" => %c.to)
             }
         }
         Ok(())
@@ -1272,13 +1266,10 @@ impl Actor<Online> {
                 return Ok(())
             };
 
-        debug!(self.logger, "create conversation";
-               "id"      => conv.id.to_string(),
-               "creator" => conv.creator.to_string(),
-               "type"    => format!("{:?}", conv.typ));
+        debug!(self.logger, "create conversation"; "id" => %conv.id, "creator" => %conv.creator, "type" => ?conv.typ);
 
         if self.resolve_user(&conv.creator, true)?.is_none() {
-            warn!(self.logger, "conversation creator not found"; "user" => conv.creator.to_string());
+            warn!(self.logger, "conversation creator not found"; "user" => %conv.creator);
             return Ok(())
         }
 
@@ -1287,7 +1278,7 @@ impl Actor<Online> {
             if self.resolve_user(&m.id, true)?.is_some() {
                 v.push(m)
             } else {
-                warn!(self.logger, "conversation member not found"; "user" => m.id.to_string())
+                warn!(self.logger, "conversation member not found"; "user" => %m.id)
             }
         }
         conv.members.others = v;
@@ -1308,20 +1299,20 @@ impl Actor<Online> {
 
         debug!(self.logger, "conversation members change";
                "type"  => if status == ConvStatus::Current { "join" } else { "leave" },
-               "id"    => e.id.to_string(),
-               "from"  => e.from.to_string(),
-               "users" => format!("{:?}", users.iter().map(UserId::as_uuid).collect::<Vec<_>>()));
+               "id"    => %e.id,
+               "from"  => %e.from,
+               "users" => ?users.iter().map(UserId::as_uuid).collect::<Vec<_>>());
 
         let sender =
             if let Some(usr) = self.resolve_user(&e.from, true)? {
                 usr
             } else {
-                warn!(self.logger, "sending user not found"; "id" => e.from.to_string());
+                warn!(self.logger, "sending user not found"; "id" => %e.from);
                 return Ok(())
             };
 
         if self.resolve_conversation(&e.id)?.is_none() {
-            warn!(self.logger, "conversation not found"; "id" => e.id.to_string());
+            warn!(self.logger, "conversation not found"; "id" => %e.id);
             return Ok(())
         }
 
@@ -1335,7 +1326,7 @@ impl Actor<Online> {
             if let Some(usr) = self.resolve_user(&u, true)? {
                 members.push(usr)
             } else {
-                warn!(self.logger, "unknown member"; "conv" => e.id.to_string(), "user" => u.to_string())
+                warn!(self.logger, "unknown member"; "conv" => %e.id, "user" => %u)
             }
         }
 
@@ -1369,13 +1360,13 @@ impl Actor<Online> {
                 return Ok(())
             };
 
-        debug!(self.logger, "new message"; "conversation" => e.id.to_string());
+        debug!(self.logger, "new message"; "conversation" => %e.id);
 
         let usr =
             if let Some(usr) = self.resolve_user(&e.from, true)? {
                 usr
             } else {
-                warn!(self.logger, "unknown sender"; "user" => e.from.to_string());
+                warn!(self.logger, "unknown sender"; "user" => %e.from);
                 return Ok(())
             };
 
@@ -1383,23 +1374,19 @@ impl Actor<Online> {
             if let Some(conv) = self.resolve_conversation(&e.id)? {
                 conv
             } else {
-                warn!(self.logger, "message for unknown conversation";
-                      "id"   => e.id.to_string(),
-                      "user" => e.from.to_string());
+                warn!(self.logger, "message for unknown conversation"; "id" => %e.id, "user" => %e.from);
                 return Ok(())
             };
 
         if self.resolve_client(&usr.id, &msg.sender)?.is_none() {
-            warn!(self.logger, "unknown sender client";
-                  "user"   => e.from.to_string(),
-                  "client" => msg.sender.as_str())
+            warn!(self.logger, "unknown sender client"; "user" => %e.from, "client" => %msg.sender)
         }
 
 
         match msg.decrypt(&e.from, &self.state.user.device.cbox) {
             Ok((session, mut plain)) => {
                 let mid = plain.text.take_message_id();
-                debug!(self.logger, "message"; "id" => mid);
+                debug!(self.logger, "message"; "id" => %mid);
                 if plain.text.has_text() {
                     debug!(self.logger, "text message");
                     let text = plain.text.take_text().take_content();
@@ -1729,9 +1716,9 @@ impl Inbox {
         loop {
             match wsock.listen() : Result<Notification, ClientError<coax_client::error::Void>> {
                 Ok(n) => {
-                    debug!(self.logger, "received"; "id" => n.id.to_string());
+                    debug!(self.logger, "received"; "id" => %n.id);
                     if let Err(e) = self.actor.on_notification(n, None) {
-                        error!(self.logger, "error decrypting notification: {}", e)
+                        error!(self.logger, "error decrypting notification"; "error" => ?e)
                     }
                 }
                 Err(e) => {
@@ -1753,12 +1740,12 @@ impl Inbox {
                             Err(ClientError::WebSocket(WsError::Handshake(401, _))) => {
                                 debug!(self.logger, "handshake unauthorised, renewing credentials ...");
                                 if let Err(e) = self.actor.state.client.reconnect().map_err(From::from).and(self.actor.renew_access()) {
-                                    error!(self.logger, "error renewing access: {}", e)
+                                    error!(self.logger, "error renewing access"; "error" => ?e)
                                 } else {
                                     continue
                                 }
                             }
-                            Err(e) => error!(self.logger, "websocket reconnect error: {}", e)
+                            Err(e) => error!(self.logger, "websocket reconnect error"; "error" => ?e)
                         }
                         if d < 30 { d += 1 }
                         thread::sleep(Duration::from_secs(d))

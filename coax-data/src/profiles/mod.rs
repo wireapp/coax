@@ -34,7 +34,7 @@ impl ProfileDb {
     }
 
     pub fn insert(&self, u: &User) -> Result<(), Error> {
-        debug!(self.logger, "inserting profile"; "id" => u.id.to_string());
+        debug!(self.logger, "inserting profile"; "id" => %u.id);
         let p = model::NewProfile {
             id:     u.id.as_slice(),
             time:   UTC::now().timestamp(),

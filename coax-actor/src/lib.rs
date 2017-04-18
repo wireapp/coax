@@ -23,7 +23,6 @@ extern crate serde;
 extern crate serde_derive;
 #[macro_use]
 extern crate slog;
-extern crate slog_term;
 extern crate tempdir;
 extern crate toml;
 extern crate url;

@@ -34,15 +34,17 @@ extern crate quick_error;
 extern crate rand;
 #[macro_use]
 extern crate slog;
+extern crate slog_async;
 extern crate slog_term;
 extern crate url;
 
 use std::error::Error;
+use std::sync::Arc;
 
 use coax_actor::config;
 use clap::{App, Arg, ArgMatches};
 use gio::ApplicationExt;
-use slog::{Logger, DrainExt};
+use slog::{Drain, Logger};
 
 #[macro_use]
 mod util;
@@ -69,8 +71,10 @@ fn main() {
 
     match load_config(&args) {
         Ok(cfg) => {
-            let drain  = slog_term::streamer().compact().build().fuse();
-            let logger = Logger::root(drain, o!("context" => "Coax"));
+            let deco   = slog_term::TermDecorator::new().build();
+            let format = slog_term::CompactFormat::new(deco).use_utc_timestamp().build().fuse();
+            let drain  = slog_async::Async::new(format).chan_size(4096).build().fuse();
+            let logger = Logger::root(Arc::new(drain), o!("context" => "Coax"));
             match coax::Coax::new(&logger, cfg) {
                 Ok(c)  => { c.run(0, &[]); }
                 Err(e) => {

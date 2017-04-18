@@ -395,7 +395,7 @@ pub mod get {
                 Ok(true)  => Some(self.decoder.from_json()),
                 Ok(false) => None,
                 Err(e)    => {
-                    error!(self.logger, "Decoder::has_more failed"; "error" => format!("{:?}", e));
+                    error!(self.logger, "Decoder::has_more failed"; "error" => ?e);
                     None
                 }
             }

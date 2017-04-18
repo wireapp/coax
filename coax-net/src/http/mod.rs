@@ -94,7 +94,7 @@ impl<S: Stream> HttpStream<S> {
     pub fn request<'a, I>(&mut self, m: Method, u: &Url, h: I) -> io::Result<()>
         where I: Iterator<Item=&'a (Name<'a>, Value<'a>)>
     {
-        trace!(self.log, "request"; "method" => m.as_str(), "url" => u.as_str());
+        trace!(self.log, "request"; "method" => m.as_str(), "url" => %u);
 
         self.write(m.as_str().as_bytes())?;
         self.write(b" ")?;
@@ -108,7 +108,7 @@ impl<S: Stream> HttpStream<S> {
         self.write(b"\r\n")?;
         self.flush()?;
 
-        trace!(self.log, "header sent"; "url" => u.as_str());
+        trace!(self.log, "header sent"; "url" => %u);
 
         Ok(())
     }
@@ -139,7 +139,7 @@ impl<S: Stream> HttpStream<S> {
     fn write_headers<'a, I>(&mut self, u: &Url, headers: I) -> io::Result<()>
         where I: Iterator<Item=&'a (Name<'a>, Value<'a>)>
     {
-        trace!(self.log, "write_headers"; "url" => u.as_str());
+        trace!(self.log, "write_headers"; "url" => %u);
         if let Some(h) = u.host_str() { // Add "Host" header.
             self.write(b"Host: ")?;
             self.write(h.as_bytes())?;

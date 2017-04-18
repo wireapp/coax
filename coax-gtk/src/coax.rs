@@ -367,7 +367,7 @@ impl Coax {
                 Ok(pp) => pp,
                 Err(e) => {
                     let details = format!("{}", e);
-                    error!(self.log, "error loading profiles"; "error" => details);
+                    error!(self.log, "error loading profiles"; "error" => %details);
                     show_message(app, MessageType::Error, "Failed to load profiles", "", Some(&details));
                     return ()
                 }
@@ -418,8 +418,8 @@ impl Coax {
                 let f =
                     this.load_local_contacts(&state, &app)
                         .map_err(with!(this, app => move |e| {
-                            error!(this.log, "failed to load local contacts"; "error" => format!("{:?}", e));
-                            show_error(&app, &e, "Failed to load contacts", &format!("{}", e))
+                            error!(this.log, "failed to load local contacts"; "error" => %e);
+                            show_error(&app, &e, "Failed to load contacts", "")
                         }));
                 this.futures.send(boxed(f)).unwrap()
             }
@@ -439,8 +439,8 @@ impl Coax {
                     .map(with!(btn => move |()| { btn.set_sensitive(true) }))
                     .map_err(with!(this, app => move |e| {
                         btn.set_sensitive(true);
-                        error!(this.log, "failed to load remote contacts"; "error" => format!("{:?}", e));
-                        show_error(&app, &e, "Failed to load contacts", &format!("{}", e))
+                        error!(this.log, "failed to load remote contacts"; "error" => %e);
+                        show_error(&app, &e, "Failed to load contacts", "")
                     }));
             this.futures.send(boxed(future)).unwrap()
         }));
@@ -502,7 +502,7 @@ impl Coax {
             let msg = MsgBuilder::new().text(txt.trim_right()).finish();
             let log = this.log.clone();
             let fut = this.send_message(&state, cid, msg).map_err(move |e| {
-                error!(log, "failed to send message"; "error" => format!("{:?}", e))
+                error!(log, "failed to send message"; "error" => ?e)
             });
             this.futures.send(boxed(fut)).unwrap();
             buf.delete(&mut s, &mut e);
@@ -556,7 +556,7 @@ impl Coax {
     }
 
     fn on_register(&self, app: &gtk::Application, n: Name<'static>, e: Email<'static>, p: Password<'static>) {
-        debug!(self.log, "on_register"; "e-mail" => e.as_str());
+        debug!(self.log, "on_register"; "e-mail" => %e);
         let this   = self.clone();
         let actor  = Actor::new(&self.log, self.config.clone(), self.tls.clone());
         let future =
@@ -573,7 +573,7 @@ impl Coax {
             }))
             .map_err(with!(app, this => move |e| {
                 this.hide_info();
-                error!(this.log, "failed to register account"; "error" => format!("{}", e));
+                error!(this.log, "failed to register account"; "error" => %e);
                 show_error(&app, &e, "Failed to register account", "")
             }));
         self.show_info("Registering your account ...");
@@ -581,7 +581,7 @@ impl Coax {
     }
 
     fn on_login(&self, app: &gtk::Application, app_win: &gtk::ApplicationWindow, disable: SimpleAction, enable: Vec<gtk::Widget>, e: Email<'static>, p: Password<'static>) {
-        debug!(self.log, "on_login"; "e-mail" => e.as_str());
+        debug!(self.log, "on_login"; "e-mail" => %e);
         let (bcast_tx, bcast_rx) = std::sync::mpsc::channel();
         let actor  = Actor::new(&self.log, self.config.clone(), self.tls.clone());
         let this   = self.clone();
@@ -647,7 +647,7 @@ impl Coax {
             }))
             .map_err(with!(app, this => move |e| {
                 this.hide_info();
-                error!(this.log, "failed to sign in"; "error" => format!("{}", e));
+                error!(this.log, "failed to sign in"; "error" => %e);
                 show_error(&app, &e, "Failed to sign in.", "")
             }));
         self.show_info("Signing in ...");
@@ -655,7 +655,7 @@ impl Coax {
     }
 
     fn on_profile(&self, app: &gtk::Application, app_win: &gtk::ApplicationWindow, disable: SimpleAction, enable: Vec<gtk::Widget>, uid: Option<UserId>) {
-        debug!(self.log, "on_profile"; "user" => uid.as_ref().map(UserId::to_string).unwrap_or(String::new()));
+        debug!(self.log, "on_profile"; "user" => ?uid);
         let user_id =
             if let Some(u) = uid {
                 u
@@ -734,7 +734,7 @@ impl Coax {
             }))
             .map_err(with!(app => move |e| {
                 this.hide_info();
-                error!(logger, "failed to activate profile"; "error" => format!("{}", e));
+                error!(logger, "failed to activate profile"; "error" => %e);
                 show_error(&app, &e, "Failed to activate profile", "")
             }));
         self.show_info("Signing in ...");
@@ -754,7 +754,7 @@ impl Coax {
                 let logger = self.log.clone();
                 let future = self.notifications(state, false)
                     .map_err(with!(logger => move |e| {
-                        error!(logger, "failed to get notifications"; "error" => format!("{}", e))
+                        error!(logger, "failed to get notifications"; "error" => %e)
                     }));
                 self.futures.send(boxed(future)).unwrap();
                 self.hide_info()
@@ -773,7 +773,7 @@ impl Coax {
     }
 
     fn on_message(&self, state: &Arc<State>, app: &gtk::Application, m: coax_data::Message<'static>) {
-        debug!(self.log, "on_message"; "conv" => m.conv.to_string(), "id" => m.id);
+        debug!(self.log, "on_message"; "conv" => %m.conv, "id" => %m.id);
         let this   = self.clone();
         let logger = self.log.clone();
         if let Some(ch) = self.channels.get(&m.conv) {
@@ -798,7 +798,7 @@ impl Coax {
                                 ch.push_msg(&m.id, Message::Image(msg));
                                 let future = self.set_image(state, ast, m.conv.clone(), m.id.clone(), img)
                                     .map_err(with!(logger => move |e| {
-                                        error!(logger, "failed to set image"; "error" => format!("{:?}", e))
+                                        error!(logger, "failed to set image"; "error" => %e)
                                     }));
                                 self.futures.send(boxed(future)).unwrap()
                             }
@@ -815,14 +815,14 @@ impl Coax {
                 if ch.conv_type() == ConvType::OneToOne && !state.is_sync.load(Ordering::Relaxed) {
                     let future = self.send_confirmation(state, &m.conv, &m.id)
                         .map_err(with!(logger => move |e| {
-                            error!(logger, "failed to send confirmation"; "error" => format!("{:?}", e))
+                            error!(logger, "failed to send confirmation"; "error" => %e)
                         }));
                     self.futures.send(boxed(future)).unwrap();
                 }
             }
         } else {
             let conv_id = m.conv.to_string();
-            info!(self.log, "message for unresolved conversation"; "conv" => conv_id);
+            info!(self.log, "message for unresolved conversation"; "conv" => %conv_id);
             let future = self.conversation(state, &m.conv)
                 .map(with!(this, state, app => move |conv| {
                     if let Some(c) = conv {
@@ -833,14 +833,14 @@ impl Coax {
                     }
                 }))
                 .map_err(move |e| {
-                    error!(logger, "on_message error"; "error" => format!("{}", e))
+                    error!(logger, "on_message error"; "error" => %e)
                 });
             self.futures.send(boxed(future)).unwrap()
         }
     }
 
     fn on_message_update(&self, state: &Arc<State>, app: &gtk::Application, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
-        debug!(self.log, "on_message_update"; "conv" => c.to_string(), "id" => id);
+        debug!(self.log, "on_message_update"; "conv" => %c, "id" => %id);
         if let Some(ch) = self.channels.get(&c) {
             if let Some(mut m) = ch.get_msg_mut(&id) {
                 if let Message::Text(ref mut msg) = *m {
@@ -852,7 +852,7 @@ impl Coax {
                 }
             }
         } else {
-            info!(self.log, "message update for unresolved conversation"; "conv" => c.to_string());
+            info!(self.log, "message update for unresolved conversation"; "conv" => %c);
             let this   = self.clone();
             let logger = self.log.clone();
             let future = self.conversation(state, &c)
@@ -862,25 +862,25 @@ impl Coax {
                         this.on_conversation(&state, &app, c);
                         this.on_message_update(&state, &app, id, cid, t, s)
                     } else {
-                        error!(this.log, "failed to resolve conversation"; "id" => c.to_string());
+                        error!(this.log, "failed to resolve conversation"; "id" => %c);
                     }
                 }))
                 .map_err(move |e| {
-                    error!(logger, "on_message_update error"; "error" => format!("{}", e))
+                    error!(logger, "on_message_update error"; "error" => %e)
                 });
             self.futures.send(boxed(future)).unwrap()
         }
     }
 
     fn on_conversation(&self, state: &Arc<State>, app: &gtk::Application, mut conv: Conversation<'static>) {
-        debug!(self.log, "on_conversation"; "conv" => conv.id.to_string());
+        debug!(self.log, "on_conversation"; "conv" => %conv.id);
         if self.channels.contains_key(&conv.id) {
-            debug!(self.log, "conversation already loaded"; "conv" => conv.id.to_string());
+            debug!(self.log, "conversation already loaded"; "conv" => %conv.id);
             return ()
         }
 
         if conv.ctype == ConvType::SelfConv {
-            debug!(self.log, "ignoring self conversation"; "conv" => conv.id.to_string());
+            debug!(self.log, "ignoring self conversation"; "conv" => %conv.id);
             return ()
         }
 
@@ -919,7 +919,7 @@ impl Coax {
             if let Some(id) = conv.members.iter().filter(|m| **m != state.me.id).next().cloned() {
                 id
             } else {
-                warn!(self.log, "no user found in 1:1 conversation"; "conv" => conv.id.to_string());
+                warn!(self.log, "no user found in 1:1 conversation"; "conv" => %conv.id);
                 return ()
             };
 
@@ -940,19 +940,19 @@ impl Coax {
                         this.convlist.show_all()
                     }
                 } else {
-                    warn!(this.log, "user not found"; "id" => user_id.to_string());
+                    warn!(this.log, "user not found"; "id" => %user_id);
                     return ()
                 }
             }))
             .map_err(with!(this => move |e| {
-                error!(this.log, "failed to post-process one to one conversation"; "error" => format!("{}", e))
+                error!(this.log, "failed to post-process one to one conversation"; "error" => %e)
             }));
 
         self.futures.send(boxed(future)).unwrap()
     }
 
     fn on_contact(&self, state: &Arc<State>, app: &gtk::Application, to: User<'static>, contact: Connection) {
-        debug!(self.log, "on_contact"; "to" => to.id.to_string());
+        debug!(self.log, "on_contact"; "to" => %to.id);
         self.ensure_user_res(state, &to);
         let mut u = self.resources.user_mut(&to.id).unwrap();
         if let Some(mut cont) = self.contacts.get_mut(&to.id) {
@@ -973,7 +973,7 @@ impl Coax {
     }
 
     fn on_members_change(&self, state: &Arc<State>, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
-        debug!(self.log, "on_members_change"; "conv" => cid.to_string());
+        debug!(self.log, "on_members_change"; "conv" => %cid);
         if let Some(chan) = self.channels.get(&cid) {
             let local = dt.with_timezone(&self.timezone);
             for m in members {
@@ -1010,11 +1010,11 @@ impl Coax {
                         this.on_conversation(&state, &app, c);
                         this.on_members_change(&state, &app, dt, cid, members, s, from)
                     } else {
-                        error!(this.log, "Failed to resolve conversation"; "id" => cid.to_string())
+                        error!(this.log, "Failed to resolve conversation"; "id" => %cid)
                     }
                 }))
                 .map_err(with!(this => move |e| {
-                    error!(this.log, "on_members_change error"; "error" => format!("{}", e))
+                    error!(this.log, "on_members_change error"; "error" => %e)
                 }));
             self.futures.send(boxed(future)).unwrap()
         }
@@ -1068,14 +1068,14 @@ impl Coax {
                 }
             }))
             .map_err(with!(app => move |e| {
-                error!(this.log, "failed to create conversation"; "error" => format!("{}", e));
+                error!(this.log, "failed to create conversation"; "error" => %e);
                 show_error(&app, &e, "Failed to create conversation", "")
             }));
         self.futures.send(boxed(future)).unwrap()
     }
 
     fn on_connect_change(&self, state: &Arc<State>, app: &gtk::Application, s: &gtk::ComboBoxText, uid: UserId, cid: ConvId, new: ConnectStatus) {
-        debug!(self.log, "on_connect_change"; "user" => uid.to_string());
+        debug!(self.log, "on_connect_change"; "user" => %uid);
         s.set_sensitive(false);
         let this   = self.clone();
         let future =
@@ -1099,7 +1099,7 @@ impl Coax {
             }))
             .map_err(with!(app, s => move |e| {
                 s.set_sensitive(true);
-                error!(this.log, "failed to update status"; "error" => format!("{}", e));
+                error!(this.log, "failed to update status"; "error" => %e);
                 show_error(&app, &e, "Failed to update status", "")
             }));
         self.futures.send(boxed(future)).unwrap()
@@ -1109,8 +1109,8 @@ impl Coax {
         let logger = self.log.clone();
         let future = self.load_messages(state, app, cid)
             .map_err(with!(app => move |e| {
-                error!(logger, "failed to load messages"; "error" => format!("{:?}", e));
-                show_error(&app, &e, "Failed to load messages", &format!("{}", e))
+                error!(logger, "failed to load messages"; "error" => ?e);
+                show_error(&app, &e, "Failed to load messages", "")
             }));
         self.futures.send(boxed(future)).unwrap()
     }
@@ -1119,8 +1119,8 @@ impl Coax {
         let logger = self.log.clone();
         let future = self.load_local_conversations(state, app)
             .map_err(with!(app => move |e| {
-                error!(logger, "failed to load conversations"; "error" => format!("{:?}", e));
-                show_error(&app, &e, "Failed to load conversations", &format!("{}", e))
+                error!(logger, "failed to load conversations"; "error" => ?e);
+                show_error(&app, &e, "Failed to load conversations", "");
             }));
         self.futures.send(boxed(future)).unwrap()
     }
@@ -1133,8 +1133,8 @@ impl Coax {
                 a.save_asset_as(&k, &p).map_err(From::from)
             }))
             .map_err(with!(app => move |e| {
-                error!(logger, "failed to save"; "error" => format!("{:?}", e));
-                show_error(&app, &e, "Failed to save file", &format!("{}", e))
+                error!(logger, "failed to save"; "error" => ?e);
+                show_error(&app, &e, "Failed to save file", "");
             }));
         self.futures.send(boxed(future)).unwrap()
     }
@@ -1192,7 +1192,7 @@ impl Coax {
     }
 
     fn set_user_icon(&self, state: &Arc<State>, u: UserId) -> impl Future<Item=(), Error=Error> {
-        debug!(self.log, "set user icon"; "id" => u.to_string());
+        debug!(self.log, "set user icon"; "id" => %u);
         let future =
             if state.is_online.load(Ordering::Relaxed) {
                 self.pool_on.spawn_fn(with!(state, u => move || {
@@ -1220,19 +1220,19 @@ impl Coax {
         let this = self.clone();
         future.map(move |data| {
             if data.is_empty() {
-                info!(this.log, "no user icon"; "user" => u.to_string());
+                info!(this.log, "no user icon"; "user" => %u);
                 return ()
             }
             if let Some(mut user) = this.resources.user_mut(&u) {
                 user.set_icon(&data)
             } else {
-                warn!(this.log, "no user resources"; "user" => u.to_string())
+                warn!(this.log, "no user resources"; "user" => %u)
             };
         })
     }
 
     fn send_confirmation(&self, state: &Arc<State>, c: &ConvId, id: &str) -> impl Future<Item=(), Error=Error> {
-        debug!(self.log, "send confirmation"; "conv" => c.to_string(), "msg" => id);
+        debug!(self.log, "send confirmation"; "conv" => %c, "msg" => id);
         let msg  = MsgBuilder::new().delivered(id).finish();
         let this = self.clone();
         self.prepare_message(state, c, msg, Delivery::OneShot)
@@ -1242,7 +1242,7 @@ impl Coax {
     }
 
     fn send_message(&self, state: &Arc<State>, id: &ConvId, msg: GenericMessage) -> impl Future<Item=(), Error=Error> {
-        debug!(self.log, "send message"; "conv" => id.to_string(), "id" => msg.get_message_id());
+        debug!(self.log, "send message"; "conv" => %id, "id" => msg.get_message_id());
         let this = self.clone();
         let mid  = String::from(msg.get_message_id());
         let text = String::from(msg.get_text().get_content());
@@ -1301,7 +1301,7 @@ impl Coax {
     fn load_local_conversations(&self, state: &Arc<State>, app: &gtk::Application) -> impl Future<Item=(), Error=Error> {
         let this   = self.clone();
         let pstate = state.ch_state.lock().unwrap().clone();
-        debug!(self.log, "load conversations"; "paging_state" => format!("{:?}", pstate));
+        debug!(self.log, "load conversations"; "paging_state" => ?pstate);
         self.pool_off.spawn_fn(with!(state => move || {
                 let mut a = state.actor_off.lock().unwrap();
                 a.load_conversations(pstate, 64).map_err(From::from)
@@ -1334,7 +1334,7 @@ impl Coax {
         let this    = self.clone();
         let conv_id = cid.clone();
         let pstate  = self.channels.get(&cid).and_then(|ch| ch.paging_state());
-        debug!(self.log, "load conversation messages"; "id" => cid.to_string(), "paging_state" => format!("{:?}", pstate));
+        debug!(self.log, "load conversation messages"; "id" => %cid, "paging_state" => ?pstate);
         self.pool_off.spawn_fn(with!(state => move || {
                 let mut a = state.actor_off.lock().unwrap();
                 a.load_messages(&conv_id, pstate, 32).map_err(From::from)
@@ -1368,7 +1368,7 @@ impl Coax {
                                 msg.start_spinner();
                                 let future = this.set_image(&state, ast, cid.clone(), m.id.clone(), img)
                                     .map_err(with!(this => move |e| {
-                                        error!(this.log, "failed to set image"; "error" => format!("{:?}", e))
+                                        error!(this.log, "failed to set image"; "error" => ?e)
                                     }));
                                 this.futures.send(boxed(future)).unwrap();
                                 Message::Image(msg)
@@ -1422,7 +1422,7 @@ impl Coax {
     }
 
     fn prepare_message(&self, state: &Arc<State>, id: &ConvId, msg: GenericMessage, del: Delivery) -> impl Future<Item=(GenericMessage, send::Params), Error=Error> {
-        debug!(self.log, "prepare message future"; "conv" => id.to_string(), "id" => msg.get_message_id());
+        debug!(self.log, "prepare message future"; "conv" => %id, "id" => msg.get_message_id());
         self.pool_off.spawn_fn(with!(state, id => move || {
             let mut a = state.actor_off.lock().unwrap();
             if del != Delivery::OneShot {
@@ -1435,7 +1435,7 @@ impl Coax {
     }
 
     fn send(&self, state: &Arc<State>, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<UTC>, Error=Error> {
-        debug!(self.log, "send future"; "conv" => params.conv.to_string(), "id" => msg.get_message_id());
+        debug!(self.log, "send future"; "conv" => %params.conv, "id" => msg.get_message_id());
         let logger = self.log.clone();
         self.pool_on.spawn_fn(with!(state => move || {
             loop {
@@ -1452,7 +1452,7 @@ impl Coax {
                                 return Err(e.into())
                             }
                             Err(e) =>
-                                error!(logger, "failed to send message"; "id" => msg.get_message_id(), "error" => format!("{}", e))
+                                error!(logger, "failed to send message"; "id" => msg.get_message_id(), "error" => %e)
                         }
                     } else {
                         return Err(Error::InvalidAppState)
@@ -1565,12 +1565,12 @@ impl Coax {
 
     fn ensure_user_res(&self, state: &Arc<State>, u: &User) {
         if !self.resources.has_user(&u.id) {
-            debug!(self.log, "adding user resources"; "user" => u.id.to_string());
+            debug!(self.log, "adding user resources"; "user" => %u.id);
             self.resources.add_user(u);
             let logger = self.log.clone();
             let future = self.set_user_icon(&state, u.id.clone())
                 .map_err(move |e| {
-                    error!(logger, "failed to set user icon"; "error" => format!("{:?}", e));
+                    error!(logger, "failed to set user icon"; "error" => ?e)
                 });
             self.futures.send(boxed(future)).unwrap()
         }
@@ -1599,7 +1599,7 @@ impl Coax {
                 .show()
                 .map(|_| ())
                 .unwrap_or_else(|e| {
-                    warn!(self.log, "error showing system notification"; "error" => format!("{:?}", e))
+                    warn!(self.log, "error showing system notification"; "error" => ?e)
                 })
         }
     }

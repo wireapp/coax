@@ -44,7 +44,7 @@ impl<'a> Client<'a> {
     /// Establish a TLS connection to the given URL host.
     pub fn connect(g: &Logger, u: Url, domain: &str, c: Arc<Tls>) -> Result<Client<'a>, Error<Void>> {
         let log = g.new(o!("context" => "Client"));
-        debug!(log, "connect"; "url" => u.as_str());
+        debug!(log, "connect"; "url" => %u);
         let tcp = TcpStream::connect(&u)?;
         let tls = TlsStream::new(c.as_ref(), domain, tcp)?;
         let (rpc, tkn) = Rpc::new(&log, HttpStream::new(&log, tls), true);
@@ -75,7 +75,7 @@ impl<'a> Client<'a> {
 
     /// Re-establish the connection.
     pub fn reconnect(&mut self) -> Result<(), Error<Void>> {
-        debug!(self.log, "reconnect"; "host" => self.url.host_str().unwrap_or("N/A"));
+        debug!(self.log, "reconnect"; "host" => ?self.url.host_str());
         let tcp = TcpStream::connect(&self.url)?;
         tcp.set_read_timeout(self.tme.read.clone())?;
         tcp.set_write_timeout(self.tme.write.clone())?;
@@ -112,12 +112,12 @@ impl<'a> Client<'a> {
             }
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "renew access token error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "renew access token error"; "status" => num, "error" => ?e);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "renew access token error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "renew access token error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -146,12 +146,12 @@ impl<'a> Client<'a> {
             }
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "login error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "login error"; "status" => num, "error" => ?e);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "login error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "login error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -171,7 +171,7 @@ impl<'a> Client<'a> {
             num => {
                 let j = is_json(self.response());
                 let e = self.error_response(tkn, j)?;
-                error!(self.log, "logout error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "logout error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -191,19 +191,19 @@ impl<'a> Client<'a> {
             201 if json_resp => self.recv_json(tkn).map_err(From::from),
             num if json_resp => {
                 let e = self.recv_json(tkn)?;
-                error!(self.log, "user registration error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "user registration error"; "status" => num, "error" => ?e);
                 Err(Error::Error((e: ApiError).into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "user registration error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "user registration error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
     }
 
     pub fn set_connect_status(&mut self, p: &user::connect::update::Params, t: &AccessToken) -> Result<bool, Error<user::connect::update::Error>> {
-        info!(self.log, "updating connect status to user"; "user" => p.user.to_string());
+        info!(self.log, "updating connect status to user"; "user" => %p.user);
         self.url.set_path(&format!("/connections/{}", p.user));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -212,23 +212,23 @@ impl<'a> Client<'a> {
         let json_resp = is_json(self.response());
         match self.response().status() {
             200 if json_resp => {
-                debug!(self.log, "connection status updated"; "user" => p.user.to_string());
+                debug!(self.log, "connection status updated"; "user" => %p.user);
                 self.drain(tkn)?;
                 Ok(true)
             }
             204 => {
-                debug!(self.log, "connection status unchanged"; "user" => p.user.to_string());
+                debug!(self.log, "connection status unchanged"; "user" => %p.user);
                 self.drain(tkn)?;
                 Ok(false)
             }
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "error updating connection status"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error updating connection status"; "status" => num, "error" => ?e);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error updaeting connection status"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error updaeting connection status"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -236,7 +236,7 @@ impl<'a> Client<'a> {
 
     /// Send a connection request to some user [`POST /connections`].
     pub fn user_connect<'b>(&mut self, p: &user::connect::Params, t: &AccessToken) -> Result<user::Connection<'b>, Error<user::connect::Error>> {
-        info!(self.log, "connecting to user"; "user" => p.user.to_string());
+        info!(self.log, "connecting to user"; "user" => %p.user);
         self.url.set_path("/connections");
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -247,12 +247,12 @@ impl<'a> Client<'a> {
             200 | 201 if json_resp => self.recv_json(tkn).map_err(From::from),
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "error connecting user"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error connecting user"; "status" => num, "error" => ?e);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error connecting user"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error connecting user"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -260,7 +260,7 @@ impl<'a> Client<'a> {
 
     /// Lookup connection to user [`GET /connections/{user}`]
     pub fn user_connection<'b>(&mut self, to: &UserId, t: &AccessToken) -> Result<Option<user::Connection<'b>>, Error<Void>> {
-        info!(self.log, "lookup connection"; "id" => to.to_string());
+        info!(self.log, "lookup connection"; "id" => %to);
         self.url.set_path(&format!("/connections/{}", to.to_string()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -270,13 +270,13 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 => {
-                info!(self.log, "connection not found"; "id" => to.to_string());
+                info!(self.log, "connection not found"; "id" => %to);
                 self.drain(tkn)?;
                 Ok(None)
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error getting connection"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error getting connection"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -303,7 +303,7 @@ impl<'a> Client<'a> {
                     .map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error getting connections"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error getting connections"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -322,7 +322,7 @@ impl<'a> Client<'a> {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "self lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "self lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -330,7 +330,7 @@ impl<'a> Client<'a> {
 
     /// Get some user profile [`GET /users/{id}`].
     pub fn user<'b>(&mut self, u: &UserId, t: &AccessToken) -> Result<Option<User<'b>>, Error<Void>> {
-        debug!(self.log, "looking up user"; "id" => u.to_string());
+        debug!(self.log, "looking up user"; "id" => %u);
         self.url.set_path(&format!("/users/{}", u.to_string()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -340,20 +340,20 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 if json_resp => {
-                warn!(self.log, "user not found"; "id" => u.to_string());
+                warn!(self.log, "user not found"; "id" => %u);
                 self.drain(tkn)?;
                 Ok(None)
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "user lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "user lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
     }
 
     pub fn asset_url(&mut self, k: &AssetKey, a: Option<&AssetToken>, t: &AccessToken) -> Result<Url, Error<Void>> {
-        debug!(self.log, "getting asset"; "key" => k.as_str());
+        debug!(self.log, "getting asset"; "key" => %k);
         self.url.set_path(&format!("/assets/v3/{}", k.as_str()));
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
         let tkn  =
@@ -379,7 +379,7 @@ impl<'a> Client<'a> {
             num => {
                 let json_resp = is_json(self.response());
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error getting asset url"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error getting asset url"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -395,7 +395,7 @@ impl<'a> Client<'a> {
     }
 
     pub fn client_prekey<'b>(&mut self, u: &UserId, c: &ClientId, t: &AccessToken) -> Result<Option<ClientPreKey<'b>>, Error<Void>> {
-        debug!(self.log, "getting prekey"; "user" => u.to_string(), "client" => c.as_str());
+        debug!(self.log, "getting prekey"; "user" => %u, "client" => %c);
         self.url.set_path(&format!("/users/{}/prekeys/{}", u.to_string(), c.as_str()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -405,13 +405,13 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 => {
-                warn!(self.log, "user or client not found"; "user" => u.to_string(), "client" => c.as_str());
+                warn!(self.log, "user or client not found"; "user" => %u, "client" => %c);
                 self.drain(tkn)?;
                 Ok(None)
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error getting prekey"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error getting prekey"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -430,7 +430,7 @@ impl<'a> Client<'a> {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "prekeys lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "prekeys lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -449,7 +449,7 @@ impl<'a> Client<'a> {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "user prekeys lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "user prekeys lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -468,12 +468,12 @@ impl<'a> Client<'a> {
             201 if json_resp => Ok(self.recv_json(tkn)?),
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "client registration error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "client registration error"; "status" => num, "error" => ?e);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "client registration error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "client registration error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -481,7 +481,7 @@ impl<'a> Client<'a> {
 
     /// Remove the given client [`DELETE /clients/{id}`].
     pub fn client_delete(&mut self, c: &ClientId, p: Option<&client::delete::Params>, t: &AccessToken) -> Result<(), Error<client::delete::Error>> {
-        info!(self.log, "deleting client"; "id" => c.as_str());
+        info!(self.log, "deleting client"; "id" => %c);
         self.url.set_path(&format!("/clients/{}", c.as_str()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -496,12 +496,12 @@ impl<'a> Client<'a> {
             200 => self.drain(tkn),
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "client deletion error"; "status" => num, "error" => format!("{:?}", e), "id" => c.as_str());
+                error!(self.log, "client deletion error"; "status" => num, "error" => ?e, "id" => %c);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "client deletion error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "client deletion error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -509,7 +509,7 @@ impl<'a> Client<'a> {
 
     /// Get information about some client belonging to the requestor [`GET /clients/{id}`].
     pub fn self_client<'b>(&mut self, c: &ClientId, t: &AccessToken) -> Result<Option<ApiClient<'b>>, Error<Void>> {
-        debug!(self.log, "looking up client"; "id" => c.as_str());
+        debug!(self.log, "looking up client"; "id" => %c);
         self.url.set_path(&format!("/clients/{}", c.as_str()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -519,13 +519,13 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 => {
-                info!(self.log, "client not found"; "id" => c.as_str());
+                info!(self.log, "client not found"; "id" => %c);
                 self.drain(tkn)?;
                 Ok(None)
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "client lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "client lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -533,7 +533,7 @@ impl<'a> Client<'a> {
 
     /// Get information about some client belonging to the given user [`GET /users/{uid}/clients/{cid}`].
     pub fn user_client<'b>(&mut self, u: &UserId, c: &ClientId, t: &AccessToken) -> Result<Option<ApiClient<'b>>, Error<Void>> {
-        debug!(self.log, "looking up client"; "user" => u.to_string(), "id" => c.as_str());
+        debug!(self.log, "looking up client"; "user" => %u, "id" => %c);
         self.url.set_path(&format!("/users/{}/clients/{}", u.to_string(), c.as_str()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -543,13 +543,13 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 => {
-                info!(self.log, "client not found"; "user" => u.to_string(), "id" => c.as_str());
+                info!(self.log, "client not found"; "user" => %u, "id" => %c);
                 self.drain(tkn)?;
                 Ok(None)
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "client lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "client lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -557,7 +557,7 @@ impl<'a> Client<'a> {
 
     /// Get information about all clients belonging to the given user [`GET /users/{id}/clients`].
     pub fn user_clients<'b>(&mut self, u: &UserId, t: &AccessToken) -> Result<Vec<ApiClient<'b>>, Error<Void>> {
-        debug!(self.log, "looking up clients"; "user" => u.to_string());
+        debug!(self.log, "looking up clients"; "user" => %u);
         self.url.set_path(&format!("/users/{}/clients", u.to_string()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -567,13 +567,13 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 if json_resp => {
-                warn!(self.log, "user not found"; "user" => u.to_string());
+                warn!(self.log, "user not found"; "user" => %u);
                 self.drain(tkn)?;
                 Ok(Vec::new())
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "clients lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "clients lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -600,7 +600,7 @@ impl<'a> Client<'a> {
                     .map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "conversation lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "conversation lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -608,7 +608,7 @@ impl<'a> Client<'a> {
 
     /// Lookup conversation by id [`GET /conversations/{id}`]
     pub fn conversation<'b>(&mut self, id: &ConvId, t: &AccessToken) -> Result<Option<Conversation<'b>>, Error<Void>> {
-        debug!(self.log, "looking up conversation"; "id" => id.to_string());
+        debug!(self.log, "looking up conversation"; "id" => %id);
         self.url.set_path(&format!("/conversations/{}", id.to_string()));
         let hdrs = &[(AUTHORIZATION, Value::new(t.bearer.as_bytes()))];
         let tkn  = self.tkn.take().ok_or(Error::InvalidState)?;
@@ -618,13 +618,13 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => self.recv_json(tkn).map_err(From::from),
             404 if json_resp => {
-                info!(self.log, "conversation not found"; "id" => id.to_string());
+                info!(self.log, "conversation not found"; "id" => %id);
                 self.drain(tkn)?;
                 Ok(None)
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "conversation lookup error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "conversation lookup error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -652,7 +652,7 @@ impl<'a> Client<'a> {
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "conversation creation error"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "conversation creation error"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -674,12 +674,12 @@ impl<'a> Client<'a> {
             }
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "error joining conversation"; "statuc" => num, "error" => format!("{:?}", e), "id" => id.to_string());
+                error!(self.log, "error joining conversation"; "statuc" => num, "error" => ?e, "id" => %id);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error joining conversation"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error joining conversation"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -696,7 +696,7 @@ impl<'a> Client<'a> {
         match self.response().status() {
             200 if json_resp => {
                 let n: Notification = self.recv_json(tkn)?;
-                debug!(self.log, "last notification"; "id" => n.id.to_string());
+                debug!(self.log, "last notification"; "id" => %n.id);
                 Ok(Some(n.id))
             }
             404 => {
@@ -706,7 +706,7 @@ impl<'a> Client<'a> {
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error getting last notification"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error getting last notification"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -723,7 +723,7 @@ impl<'a> Client<'a> {
                 while let Some(item) = itr.next() {
                     match item {
                         Ok(n)  => vec.push(n),
-                        Err(e) => error!(logger, "failed to parse notification"; "error" => format!("{:?}", e))
+                        Err(e) => error!(logger, "failed to parse notification"; "error" => ?e)
                     }
                 }
             }
@@ -753,7 +753,7 @@ impl<'a> Client<'a> {
             200 if json_resp => self.rpc.reader(tkn).map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error getting events"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error getting events"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }
@@ -779,12 +779,12 @@ impl<'a> Client<'a> {
             }
             num if json_resp => {
                 let e: ApiError = self.recv_json(tkn)?;
-                error!(self.log, "error sending message"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error sending message"; "status" => num, "error" => ?e);
                 Err(Error::Error(e.into()))
             }
             num => {
                 let e = self.error_response(tkn, json_resp)?;
-                error!(self.log, "error sending message"; "status" => num, "error" => format!("{:?}", e));
+                error!(self.log, "error sending message"; "status" => num, "error" => ?e);
                 Err(e)
             }
         }

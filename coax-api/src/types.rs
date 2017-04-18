@@ -27,7 +27,7 @@ pub fn random_uuid() -> Uuid {
     Uuid::new_v4()
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Id<T>{
     id: Uuid,
     _t: PhantomData<T>
@@ -67,6 +67,12 @@ impl<T> Id<T> {
 
     pub fn from_bytes(b: &[u8]) -> Option<Id<T>> {
         Uuid::from_bytes(b).map(Id::new).ok()
+    }
+}
+
+impl<T> fmt::Debug for Id<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.id.hyphenated())
     }
 }
 

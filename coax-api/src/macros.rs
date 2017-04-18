@@ -33,6 +33,12 @@ macro_rules! json_str_type {
                 Ok($name(Cow::Owned(d.string()?)))
             }
         }
+
+        impl<'a> ::std::fmt::Display for $name<'a> {
+            fn fmt(&self, f: &mut ::std::fmt::Formatter) -> ::std::fmt::Result {
+                self.0.fmt(f)
+            }
+        }
     }
 }
 

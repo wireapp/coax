@@ -60,7 +60,7 @@ impl<'r, S: Stream> Rpc<'r, S> {
 
     /// Send HTTP request without body.
     pub fn send(&mut self, _: Init, m: Method, u: &Url, h: &[(Name, Value)]) -> Result<Sent, Error> {
-        debug!(self.log, "send"; "method" => m.as_str(), "url" => u.as_str());
+        debug!(self.log, "send"; "method" => m.as_str(), "url" => %u);
         self.stream.request(m, u, h.iter().chain(DEFAULT_HEADERS.iter()))?;
         self.method = Some(m);
         Ok(Sent(()))
@@ -68,7 +68,7 @@ impl<'r, S: Stream> Rpc<'r, S> {
 
     /// Send HTTP request header and JSON body.
     pub fn send_json<T: ToJson>(&mut self, _: Init, m: Method, u: &Url, h: &[(Name, Value)], body: &T) -> Result<Sent, Error> {
-        debug!(self.log, "send json"; "method" => m.as_str(), "url" => u.as_str());
+        debug!(self.log, "send json"; "method" => m.as_str(), "url" => %u);
         let headers = h.iter().chain(DEFAULT_HEADERS.iter()).chain(JSON_HEADERS.iter());
         if self.compress {
             self.stream.request(m, u, headers.chain(GZIP_CONTENT.iter()))?;

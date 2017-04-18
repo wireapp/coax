@@ -8,7 +8,7 @@ use cryptobox::{CBox, CBoxSession, CBoxError};
 use json::ast::{Json, Ref};
 use json::{FromJson, Decoder, DecodeError, DecodeResult, Utf8Buffer};
 use openssl::error::ErrorStack;
-use openssl::hash::{hash, MessageDigest};
+use openssl::hash::{hash2, MessageDigest};
 use openssl::symm::{self, Cipher};
 use protobuf::{self, ProtobufError};
 use rustc_serialize::base64::{FromBase64, FromBase64Error};
@@ -323,8 +323,8 @@ impl<'a> Message<'a, Cow<'a, [u8]>> {
                 }
                 let ext  = msg.get_external();
                 let hsh1 = ext.get_sha256();
-                let hsh2 = hash(MessageDigest::sha256(), &data)?;
-                if hsh1 != hsh2.as_slice() {
+                let hsh2 = hash2(MessageDigest::sha256(), &data)?;
+                if hsh1 != hsh2.as_ref() {
                     return Err(DecryptError::Integrity("hash mismatch"))
                 }
                 let key = ext.get_otr_key();

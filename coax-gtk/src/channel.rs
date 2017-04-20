@@ -49,7 +49,7 @@ impl Channel {
             gtk::Image::new_from_pixbuf(Some(&ico))
         };
         let ch = Channel::new(ConvType::Group, dt, id, n, img);
-        ch.set_sub(&format!("{} participants", len));
+        ch.set_members_count(len);
         ch
     }
 
@@ -290,6 +290,16 @@ impl Channel {
         self.update_tstamp(dt.timestamp())
     }
 
+    pub fn set_name(&self, n: &Name) {
+        self.name_label.set_text(n.as_str())
+    }
+
+    pub fn set_members_count(&self, n: usize) {
+        if self.ctype == ConvType::Group {
+            self.set_sub(&format!("{} participants", n))
+        }
+    }
+
     fn update_tstamp(&self, dt: i64) {
         ffi::set_data(&self.channel_row, &ffi::TSTAMP, dt)
     }
@@ -299,10 +309,6 @@ impl Channel {
         let dstr = dt.format("%F").to_string();
         self.time_label.set_text(&tstr);
         self.date_label.set_text(&dstr)
-    }
-
-    fn set_name(&self, n: &Name) {
-        self.name_label.set_text(n.as_str())
     }
 
     fn set_sub(&self, txt: &str) {

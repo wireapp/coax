@@ -613,7 +613,7 @@ impl Coax {
                 this.setup_callbacks(&state, &app, &app_win);
                 this.show_info("Loading conversations ...");
                 set_subtitle(&app, Some(state.me.name.as_str()));
-                this.ensure_user_res(&state, &state.me);
+                this.ensure_user_res(&state, &state.me, false);
                 let prof = ProfileView::new(&mut this.resources.user_mut(&state.me.id).unwrap());
                 this.me_box.add(prof.vbox());
                 disable.set_enabled(false);
@@ -687,7 +687,7 @@ impl Coax {
                 this.setup_callbacks(&state, &app, &app_win);
                 this.show_info("Loading conversations ...");
                 set_subtitle(&app, Some(state.me.name.as_str()));
-                this.ensure_user_res(&state, &state.me);
+                this.ensure_user_res(&state, &state.me, false);
                 let prof = ProfileView::new(&mut this.resources.user_mut(&state.me.id).unwrap());
                 this.me_box.add(prof.vbox());
                 disable.set_enabled(false);
@@ -778,7 +778,7 @@ impl Coax {
         let logger = self.log.clone();
         if let Some(ch) = self.channels.get(&m.conv) {
             if !ch.has_msg(&m.id) {
-                self.ensure_user_res(state, &m.user);
+                self.ensure_user_res(state, &m.user, false);
                 let mtime   = m.time.with_timezone(&self.timezone);
                 let mut usr = self.resources.user_mut(&m.user.id).unwrap();
                 self.show_notification(app, &usr, &m);
@@ -928,7 +928,7 @@ impl Coax {
             .map(with!(this, state, app => move |u| {
                 if let Some(user) = u {
                     if !this.channels.contains_key(&conv.id) {
-                        this.ensure_user_res(&state, &user);
+                        this.ensure_user_res(&state, &user, false);
                         let mut usr = this.resources.user_mut(&user.id).unwrap();
                         let chn = Channel::one_to_one(&conv.time.with_timezone(&this.timezone), &conv.id, &mut usr);
                         chn.set_current(conv.status == ConvStatus::Current);
@@ -953,7 +953,7 @@ impl Coax {
 
     fn on_contact(&self, state: &Arc<State>, app: &gtk::Application, to: User<'static>, contact: Connection) {
         debug!(self.log, "on_contact"; "to" => %to.id);
-        self.ensure_user_res(state, &to);
+        self.ensure_user_res(state, &to, true);
         let mut u = self.resources.user_mut(&to.id).unwrap();
         if let Some(mut cont) = self.contacts.get_mut(&to.id) {
             cont.block_handler(true);
@@ -1192,9 +1192,10 @@ impl Coax {
     }
 
     fn set_user_icon(&self, state: &Arc<State>, u: UserId) -> impl Future<Item=(), Error=Error> {
-        debug!(self.log, "set user icon"; "id" => %u);
+        let is_online = state.is_online.load(Ordering::Relaxed);
+        debug!(self.log, "set user icon"; "id" => %u, "online" => is_online);
         let future =
-            if state.is_online.load(Ordering::Relaxed) {
+            if is_online {
                 self.pool_on.spawn_fn(with!(state, u => move || {
                     let mut actor_guard = state.actor_on.lock().unwrap();
                     if let Some(ref mut a) = *actor_guard {
@@ -1248,7 +1249,7 @@ impl Coax {
         let text = String::from(msg.get_text().get_content());
         future::lazy(with!(this, state, id, mid => move || {
                 if let Some(ch) = this.channels.get(&id) {
-                    this.ensure_user_res(&state, &state.me);
+                    this.ensure_user_res(&state, &state.me, false);
                     let mut usr = this.resources.user_mut(&state.me.id).unwrap();
                     if !ch.has_msg(&mid) {
                         let msg = TextMessage::new(None, &mut usr, &text);
@@ -1345,7 +1346,7 @@ impl Coax {
                         if chan.has_msg(&m.id) {
                             continue
                         }
-                        this.ensure_user_res(&state, &m.user);
+                        this.ensure_user_res(&state, &m.user, false);
                         let local   = m.time.with_timezone(&this.timezone);
                         let mut usr = this.resources.user_mut(&m.user.id).unwrap();
                         let message = match m.data {
@@ -1563,17 +1564,18 @@ impl Coax {
         window.show_all();
     }
 
-    fn ensure_user_res(&self, state: &Arc<State>, u: &User) {
-        if !self.resources.has_user(&u.id) {
-            debug!(self.log, "adding user resources"; "user" => %u.id);
-            self.resources.add_user(u);
-            let logger = self.log.clone();
-            let future = self.set_user_icon(&state, u.id.clone())
-                .map_err(move |e| {
-                    error!(logger, "failed to set user icon"; "error" => ?e)
-                });
-            self.futures.send(boxed(future)).unwrap()
+    fn ensure_user_res(&self, state: &Arc<State>, u: &User, reload: bool) {
+        if self.resources.has_user(&u.id) && !reload {
+            return ()
         }
+        debug!(self.log, "adding user resources"; "user" => %u.id);
+        self.resources.add_user(u);
+        let logger = self.log.clone();
+        let future = self.set_user_icon(&state, u.id.clone())
+            .map_err(move |e| {
+                error!(logger, "failed to set user icon"; "error" => ?e)
+            });
+        self.futures.send(boxed(future)).unwrap()
     }
 
     fn show_info(&self, txt: &str) {

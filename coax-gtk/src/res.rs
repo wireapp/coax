@@ -73,6 +73,11 @@ impl User {
         img
     }
 
+    pub fn update(&mut self, u: &coax_data::User) {
+        self.name = ffi::escape(u.name.as_str()).to_string_lossy().into_owned();
+        self.handle = u.handle.as_ref().map(|h| format!("@{}", ffi::escape(h.as_str()).to_string_lossy()));
+    }
+
     fn cleanup(&mut self) {
         self.small_icons.retain(|ptr| !ptr.is_null());
         self.medium_icons.retain(|ptr| !ptr.is_null());
@@ -101,23 +106,27 @@ impl<'a, 'b> From<&'b coax_data::User<'a>> for User {
 }
 
 pub struct Resources {
-    user: CHashMap<UserId, User>
+    users: CHashMap<UserId, User>
 }
 
 impl Resources {
     pub fn new() -> Resources {
-        Resources { user: CHashMap::new() }
+        Resources { users: CHashMap::new() }
     }
 
     pub fn has_user(&self, u: &UserId) -> bool {
-        self.user.contains_key(u)
+        self.users.contains_key(u)
     }
 
     pub fn add_user(&self, u: &coax_data::User) {
-        self.user.insert(u.id.clone(), u.into());
+        if let Some(mut x) = self.users.get_mut(&u.id) {
+            x.update(u)
+        } else {
+            self.users.insert(u.id.clone(), u.into());
+        }
     }
 
     pub fn user_mut(&self, id: &UserId) -> Option<WriteGuard<UserId, User>> {
-        self.user.get_mut(id)
+        self.users.get_mut(id)
     }
 }

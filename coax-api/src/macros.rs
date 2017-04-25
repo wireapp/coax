@@ -61,13 +61,13 @@ macro_rules! json_bytes_type {
 
         impl<'a> ToJson for $name<'a> {
             fn encode<W: Write>(&self, e: &mut Encoder<W>) -> EncodeResult<()> {
-                e.string(self.0.to_base64(::rustc_serialize::base64::STANDARD))
+                e.string(::base64::encode(&self.0))
             }
         }
 
         impl<'a> FromJson for $name<'a> {
             fn decode<I: Iterator<Item=char>>(d: &mut Decoder<I>) -> DecodeResult<Self> {
-                match d.string()?.as_str().from_base64() {
+                match ::base64::decode(d.string()?.as_str()) {
                     Ok(x)  => Ok($name(Cow::Owned(x))),
                     Err(e) => Err(DecodeError::Other(Box::new(e)))
                 }

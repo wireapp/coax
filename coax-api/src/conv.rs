@@ -11,7 +11,7 @@ use openssl::error::ErrorStack;
 use openssl::hash::{hash2, MessageDigest};
 use openssl::symm::{self, Cipher};
 use protobuf::{self, ProtobufError};
-use rustc_serialize::base64::{FromBase64, FromBase64Error};
+use base64;
 use types::{UserId, ClientId, ConvId, Name, ServiceRef};
 use util;
 
@@ -287,7 +287,7 @@ impl<'a> Message<'a, Cow<'a, [u8]>> {
         let t = r.get("recipient").string().map(|s| ClientId::new(String::from(s)));
         let d = r.get("data").string().map(|s| Cow::Owned(String::from(s)));
         let m = r.get("text").string().map(|s| {
-            match s.from_base64() {
+            match base64::decode(s) {
                 Ok(b)  => Ok(Cow::Owned(b)),
                 Err(e) => Err(DecodeError::Other(Box::new(e)))
             }
@@ -317,7 +317,7 @@ impl<'a> Message<'a, Cow<'a, [u8]>> {
                 if !msg.has_external() {
                     return Err(DecryptError::MessageType("expected `External`"))
                 }
-                let data = d.from_base64()?;
+                let data = base64::decode(d.as_ref())?;
                 if data.len() < 16 {
                     return Err(DecryptError::Integrity("too short"))
                 }
@@ -368,8 +368,8 @@ impl<T: Store> From<ProtobufError> for DecryptError<T> {
     }
 }
 
-impl<T: Store> From<FromBase64Error> for DecryptError<T> {
-    fn from(e: FromBase64Error) -> DecryptError<T> {
+impl<T: Store> From<base64::DecodeError> for DecryptError<T> {
+    fn from(e: base64::DecodeError) -> DecryptError<T> {
         DecryptError::Other(Box::new(e))
     }
 }

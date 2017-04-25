@@ -4,7 +4,7 @@ use std::io::Write;
 
 use proteus::keys as proteus;
 use proteus::keys::{IdentityKey, PreKeyBundle};
-use rustc_serialize::base64::{self, ToBase64, FromBase64};
+use base64;
 use json::ast::{Json, Ref};
 use json::{FromJson, Decoder, DecodeError, DecodeResult, Utf8Buffer};
 use json::{ToJson, Encoder, EncodeError, EncodeResult};
@@ -84,7 +84,7 @@ impl PreKey {
     }
 
     pub fn from_str(s: &str) -> Option<PreKey> {
-        s.from_base64().ok().and_then(|xs| {
+        base64::decode(s).ok().and_then(|xs| {
             PreKeyBundle::deserialise(xs.as_slice()).ok().map(|k| PreKey { key: k })
         })
     }
@@ -106,7 +106,7 @@ impl FromJson for PreKey {
             PreKey {
                 key: req. "key" => {
                     let b64 = d.string()?;
-                    match b64.as_str().from_base64() {
+                    match base64::decode(&b64) {
                         Ok(xs) => match PreKeyBundle::deserialise(xs.as_slice()) {
                             Ok(pk) => Ok(pk),
                             Err(e) => Err(DecodeError::Other(Box::new(e)))
@@ -128,7 +128,7 @@ impl ToJson for PreKey {
             };
         e.object()?;
             e.key("id")?;  e.u16(self.key.prekey_id.value())?;
-            e.key("key")?; e.string(key.as_slice().to_base64(base64::STANDARD))?;
+            e.key("key")?; e.string(base64::encode(&key))?;
         e.end()
     }
 }

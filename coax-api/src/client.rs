@@ -9,7 +9,6 @@ use json::{ToJson, Encoder, EncodeResult};
 use json::{FromJson, Decoder, DecodeError, DecodeResult, Utf8Buffer};
 use json::ast::{Json, Ref};
 use proteus::keys as proteus;
-use rustc_serialize::base64::{ToBase64, FromBase64};
 use types::*;
 use util;
 

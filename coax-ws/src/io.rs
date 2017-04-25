@@ -8,7 +8,7 @@ use std::time::Duration;
 use rand::{Rng, thread_rng};
 use openssl;
 use openssl::hash::{Hasher, MessageDigest};
-use rustc_serialize::base64::{self, ToBase64};
+use base64;
 use slog::Logger;
 use url::Url;
 
@@ -265,7 +265,7 @@ impl<'a, S: Stream> Read for Connection<'a, S, Open> {
 
 fn nonce() -> String {
     let nonce = thread_rng().gen::<[u8; 16]>();
-    nonce.as_ref().to_base64(base64::STANDARD)
+    base64::encode(&nonce)
 }
 
 fn nonce_check(theirs: &[u8], ours: &[u8]) -> Result<bool, Error> {
@@ -273,7 +273,7 @@ fn nonce_check(theirs: &[u8], ours: &[u8]) -> Result<bool, Error> {
     h.update(ours)?;
     h.update(MAGIC_UUID.as_bytes())?;
     let sha1 = h.finish2()?;
-    let b64  = sha1.to_base64(base64::STANDARD);
+    let b64  = base64::encode(&sha1);
     Ok(b64.as_bytes() == theirs) // TODO: trim theirs
 }
 

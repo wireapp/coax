@@ -1,3 +1,4 @@
+extern crate base64;
 extern crate chrono;
 extern crate cookie;
 extern crate coax_api_proto;
@@ -11,7 +12,6 @@ extern crate protobuf;
 extern crate quick_error;
 #[macro_use]
 extern crate slog;
-extern crate rustc_serialize;
 extern crate uuid;
 
 #[macro_use]

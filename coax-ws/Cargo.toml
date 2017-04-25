@@ -9,12 +9,12 @@ homepage    = "https://github.com/wireapp/coax"
 description = "Partial websocket protocol implementation (RFC 6455)"
 
 [dependencies]
+base64          = ">= 0.5"
 byteorder       = ">= 0.5"
 coax-net        = { path = "../coax-net" }
 slog            = ">= 2.0"
 openssl         = ">= 0.9"
 quick-error     = ">= 1.1"
 rand            = ">= 0.3"
-rustc-serialize = ">= 0.3"
 url             = ">= 1.1"
 

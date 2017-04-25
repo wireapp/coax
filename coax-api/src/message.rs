@@ -121,7 +121,7 @@ pub mod send {
     use cryptobox::store::Store;
     use cryptobox::{CBoxError, CBoxSession};
     use protobuf::ProtobufError;
-    use rustc_serialize::base64::{self, ToBase64};
+    use base64;
     use super::NewMessage;
     use types::{UserId, ClientId, ConvId, ApiError};
 
@@ -147,7 +147,7 @@ pub mod send {
                              m: &[u8]) -> Result<(), EncryptError<S>>
         {
             let enc = s.encrypt(m)?;
-            let b64 = enc.to_base64(base64::STANDARD);
+            let b64 = base64::encode(&enc);
             match self.message.recipients.entry(u) {
                 Entry::Occupied(mut e) => {
                     e.get_mut().insert(c, b64);

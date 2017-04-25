@@ -9,6 +9,7 @@ homepage    = "https://github.com/wireapp/coax"
 description = "Wire API type definitions"
 
 [dependencies]
+base64          = ">= 0.5"
 chrono          = ">= 0.2"
 coax-api-proto  = { path = "../coax-api-proto" }
 cookie          = ">= 0.6.1"
@@ -18,7 +19,6 @@ proteus         = { git = "https://github.com/wireapp/proteus.git", branch = "de
 protobuf        = ">= 1.0"
 openssl         = ">= 0.9"
 quick-error     = ">= 1.1"
-rustc-serialize = ">= 0.3"
 slog            = ">= 2.0"
 url             = ">= 1.1"
 uuid            = { version = ">= 0.3", features = ["v4", "v5"] }

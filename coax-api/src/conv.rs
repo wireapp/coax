@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::error::Error;
 use std::fmt;
 
-use coax_api_proto::messages::GenericMessage;
+use coax_api_proto::messages::{EncryptionAlgorithm, GenericMessage};
 use cryptobox::store::Store;
 use cryptobox::{CBox, CBoxSession, CBoxError};
 use json::ast::{Json, Ref};
@@ -321,16 +321,26 @@ impl<'a> Message<'a, Cow<'a, [u8]>> {
                 if data.len() < 16 {
                     return Err(DecryptError::Integrity("too short"))
                 }
-                let ext  = msg.get_external();
-                let hsh1 = ext.get_sha256();
-                let hsh2 = hash2(MessageDigest::sha256(), &data)?;
-                if hsh1 != hsh2.as_ref() {
-                    return Err(DecryptError::Integrity("hash mismatch"))
-                }
+                let ext = msg.get_external();
                 let key = ext.get_otr_key();
                 let iv  = &data[0 .. 16];
-                let txt = symm::decrypt(Cipher::aes_256_cbc(), key, Some(iv), &data[16 ..])?;
-                protobuf::parse_from_bytes(&txt)?
+                match ext.get_encryption() {
+                    EncryptionAlgorithm::AES_GCM => {
+                        let txt = symm::decrypt(Cipher::aes_256_gcm(), key, Some(iv), &data[16 ..])?;
+                        protobuf::parse_from_bytes(&txt)?
+                    }
+                    EncryptionAlgorithm::AES_CBC => {
+                        if ext.has_sha256() {
+                            let hsh1 = ext.get_sha256();
+                            let hsh2 = hash2(MessageDigest::sha256(), &data)?;
+                            if hsh1 != hsh2.as_ref() {
+                                return Err(DecryptError::Integrity("hash mismatch"))
+                            }
+                        }
+                        let txt = symm::decrypt(Cipher::aes_256_cbc(), key, Some(iv), &data[16 ..])?;
+                        protobuf::parse_from_bytes(&txt)?
+                    }
+                }
             } else {
                 msg
             }

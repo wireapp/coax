@@ -188,10 +188,11 @@ message Asset {
 
   message RemoteData {
     required bytes otr_key = 1;
-    required bytes sha256 = 2;
+    required bytes sha256 = 2; // obsolete but required for backward compatibility
     optional string asset_id = 3;
 //    optional bytes asset_token = 4; // deprecated - changed type to string
     optional string asset_token = 5;
+    optional EncryptionAlgorithm encryption = 6;
   }
 
   optional Original original = 1;
@@ -206,7 +207,8 @@ message Asset {
 // Actual message is encrypted with AES and sent as additional data
 message External {
   required bytes otr_key = 1;
-  optional bytes sha256 = 2;      // sha256 of ciphertext
+  optional bytes sha256 = 2;      // sha256 of ciphertext, obsolete but required for backward compatibility
+  optional EncryptionAlgorithm encryption = 3;
 }
 
 message Reaction {
@@ -220,4 +222,9 @@ enum ClientAction {
 
 message Calling {
   required string content = 1;
+}
+
+enum EncryptionAlgorithm {
+  AES_CBC = 0;
+  AES_GCM = 1;
 }

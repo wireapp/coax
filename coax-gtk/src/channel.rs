@@ -1,6 +1,7 @@
 use std::cell::{Cell, RefCell};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 
 use chashmap::{CHashMap, ReadGuard, WriteGuard};
@@ -13,6 +14,7 @@ use gdk_pixbuf::{InterpType, Pixbuf};
 use gio;
 use gtk::{self, Align};
 use gtk::prelude::*;
+use mime::Mime;
 use res;
 use signals::Signal;
 use util::hash;
@@ -484,6 +486,7 @@ pub struct Image {
     image:    gtk::DrawingArea,
     grid:     gtk::Grid,
     time:     gtk::Label,
+    mime:     Rc<Mutex<Option<Mime>>>,
     sig_save: Rc<Signal<'static, PathBuf, ()>>
 }
 
@@ -522,14 +525,23 @@ impl Image {
 
         let sig_save = Rc::new(Signal::new());
 
+        let mime: Rc<Mutex<Option<Mime>>> = Rc::new(Mutex::new(None));
+
         let menu = gio::Menu::new();
         menu.append("Save as ...", "image.save");
 
         let menu_actions = gio::SimpleActionGroup::new();
 
         let save_action = gio::SimpleAction::new("save", None);
-        save_action.connect_activate(with!(sig_save => move |_, _| {
+        save_action.connect_activate(with!(mime, sig_save => move |_, _| {
             let dialog = gtk::FileChooserDialog::new(Some("Save as ..."), win.as_ref(), gtk::FileChooserAction::Save);
+            if let Some(ref m) = *mime.lock().unwrap() {
+                let f = gtk::FileFilter::new();
+                f.set_name("Images");
+                f.add_mime_type(&m.to_string());
+                dialog.add_filter(&f);
+                dialog.set_current_name(&format!("Image.{}", m.1.as_str()))
+            }
             dialog.add_button("Cancel", gtk::ResponseType::Cancel.into());
             dialog.add_button("Save", gtk::ResponseType::Accept.into());
             dialog.set_do_overwrite_confirmation(true);
@@ -560,6 +572,7 @@ impl Image {
             image:    img,
             grid:     grid,
             time:     time,
+            mime:     mime,
             sig_save: sig_save
         }
     }
@@ -590,6 +603,10 @@ impl Image {
             self.grid.remove(&w)
         }
         self.grid.attach(&self.image, 1, 1, 1, 1)
+    }
+
+    pub fn set_mime(&self, m: Option<Mime>) {
+        *self.mime.lock().unwrap() = m
     }
 }
 

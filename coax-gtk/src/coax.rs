@@ -1149,24 +1149,29 @@ impl Coax {
                 let aid = ast.id.clone();
                 self.pool_off.spawn_fn(with!(state => move || {
                     let mut a = state.actor_off.lock().unwrap();
-                    Ok(a.asset_path(&aid))
+                    Ok((a.asset_path(&aid), ast.mime))
                 }))
             } else {
                 self.pool_on.spawn_fn(with!(state => move || {
                     let mut actor_guard = state.actor_on.lock().unwrap();
                     if let Some(ref mut a) = *actor_guard {
                         a.download_asset(&ast.id, ast.token.as_ref())?;
-                        a.decrypt_asset(&ast.id, &ast.cksum, &ast.key)?;
-                        Ok(a.asset_path(&ast.id))
+                        a.decrypt_asset(&ast.id, ast.etype, &ast.key, ast.cksum.as_ref().map(|cs| cs.as_ref()))?;
+                        Ok((a.asset_path(&ast.id), ast.mime))
                     } else {
                         Err(Error::InvalidAppState)
                     }
                 }))
             };
         let channels = self.channels.clone();
-        future.map(move |path| {
+        future.map(move |(path, mime)| {
             if let Some(ch) = channels.get(&c) {
-                ch.get_msg(&m).map(|msg| if let Message::Image(ref m) = *msg { m.stop_spinner() });
+                ch.get_msg(&m).map(|msg| {
+                    if let Message::Image(ref m) = *msg {
+                        m.stop_spinner();
+                        m.set_mime(mime)
+                    }
+                });
             }
             let buf    = Pixbuf::new_from_file(path.to_string_lossy().as_ref()).unwrap(); // TODO
             let width  = buf.get_width();

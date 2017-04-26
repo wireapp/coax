@@ -73,7 +73,9 @@ table! {
         status -> SmallInt,
         token  -> Nullable<Text>,
         key    -> Binary,
-        cksum  -> Binary,
+        cksum  -> Nullable<Binary>,
+        etype  -> SmallInt,
+        mime   -> Nullable<Text>,
     }
 }
 
@@ -199,7 +201,9 @@ pub const SCHEMA: &'static str = r"
         status INTEGER NOT NULL,
         token  TEXT,
         key    BLOB NOT NULL,
-        cksum  BLOB NOT NULL
+        cksum  BLOB,
+        etype  INTEGER NOT NULL,
+        mime   TEXT
     ) WITHOUT ROWID;
 
     CREATE TABLE IF NOT EXISTS variables (

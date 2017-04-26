@@ -22,13 +22,14 @@ use coax_api::types::{Label, Password, ClientId, UserId, ConvId, Name, random_uu
 use coax_api::user::{self, Connection as UserConnection, ConnectStatus, User as ApiUser, AssetKey, AssetToken};
 use coax_api_proto::{Builder, GenericMessage};
 use coax_api_proto::builder::Confirm;
+use coax_api_proto::messages::EncryptionAlgorithm;
 use coax_client;
 use coax_client::error::{Error as ClientError, Void};
 use coax_client::client::Client;
 use coax_client::listen::Listener;
 use coax_data::{self as data, Database, Connection, Conversation, User, ConvStatus};
 use coax_data::{MessageStatus, MessageData, NewMessage, QueueItem, QueueItemData};
-use coax_data::{NewAsset, AssetStatus, AssetType};
+use coax_data::{NewAsset, AssetStatus, AssetType, Encryption};
 use coax_data::db::{self, PagingState};
 use coax_net::http::tls::{Tls, TlsStream};
 use coax_ws::io::{Error as WsError};
@@ -635,7 +636,7 @@ impl Actor<Online> {
         Ok(())
     }
 
-    pub fn decrypt_asset(&mut self, k: &AssetKey, cksum: &[u8], key: &[u8]) -> Result<(), Error> {
+    pub fn decrypt_asset(&mut self, k: &AssetKey, e: Encryption, key: &[u8], cksum: Option<&[u8]>) -> Result<(), Error> {
         let input = {
             let mut c = io::Cursor::new(Vec::new());
             self.state.user.assets.push(k.as_str());
@@ -644,20 +645,29 @@ impl Actor<Online> {
             io::copy(&mut f?, &mut c)?;
             c.into_inner()
         };
-        let mut h = Hasher::new(MessageDigest::sha256())?;
-        h.update(&input)?;
-        let sha256 = h.finish2()?;
-        if sha256.as_ref() != cksum {
-            return Err(Error::Message("asset checksum check failed"))
+        if let Some(cs) = cksum {
+            let mut h = Hasher::new(MessageDigest::sha256())?;
+            h.update(&input)?;
+            let sha256 = h.finish2()?;
+            if sha256.as_ref() != cs {
+                return Err(Error::Message("asset checksum check failed"))
+            }
+        } else {
+            if e == Encryption::AesCbc {
+                return Err(Error::Message("missing asset checksum"))
+            }
         }
         if input.len() < 16 || input.len() % 8 != 0 {
             return Err(Error::Message("encrypted asset data length invalid"))
         }
         let iv    = &input[0 .. 16];
         let data  = &input[16 .. input.len()];
-        let plain = symm::decrypt(symm::Cipher::aes_256_cbc(), key, Some(iv), data)?;
-        let temp  = TempDir::new_in(&self.config.data.root, "coax")?;
-        let path  = temp.path().join(k.as_str());
+        let plain = match e {
+            Encryption::AesCbc => symm::decrypt(symm::Cipher::aes_256_cbc(), key, Some(iv), data)?,
+            Encryption::AesGcm => symm::decrypt(symm::Cipher::aes_256_gcm(), key, Some(iv), data)?
+        };
+        let temp = TempDir::new_in(&self.config.data.root, "coax")?;
+        let path = temp.path().join(k.as_str());
         {
             let mut f = File::create(&path)?;
             io::copy(&mut plain.as_slice(), &mut f)?;
@@ -1449,18 +1459,29 @@ impl Actor<Online> {
                         } else {
                             None
                         };
+                    let algo = match data.get_encryption() {
+                        EncryptionAlgorithm::AES_CBC => Encryption::AesCbc,
+                        EncryptionAlgorithm::AES_GCM => Encryption::AesGcm
+                    };
+                    let mime = orig.get_mime_type().parse().ok();
                     debug!(self.logger, "asset data";
-                           "id"        => asset_key.as_str(),
-                           "mime-type" => orig.get_mime_type(),
-                           "size"      => orig.get_size());
+                           "id"         => asset_key.as_str(),
+                           "mime-type"  => ?mime,
+                           "encryption" => ?algo,
+                           "size"       => orig.get_size());
                     if orig.has_image() {
                         {
-                            let mut nast = NewAsset::new(&asset_key, AssetType::Image, AssetStatus::Remote, data.get_otr_key(), data.get_sha256());
+                            let mut nast = NewAsset::new(&asset_key, AssetType::Image, AssetStatus::Remote, data.get_otr_key(), algo);
                             if let Some(ref at) = asset_tkn {
                                 nast.set_token(at)
                             }
+                            if algo == Encryption::AesCbc {
+                                nast.set_checksum(data.get_sha256())
+                            }
+                            if let Some(ref m) = mime {
+                                nast.set_mime(m)
+                            }
                             self.state.user.dbase.insert_asset(&nast)?;
-
                             let mut nmsg = NewMessage::asset(&mid, &e.id, &e.time, &e.from, &msg.sender, &asset_key);
                             nmsg.set_status(MessageStatus::Received);
                             self.state.user.dbase.insert_message(&nmsg)?;
@@ -1471,7 +1492,9 @@ impl Actor<Online> {
                             status: AssetStatus::Remote,
                             token:  asset_tkn,
                             key:    data.take_otr_key(),
-                            cksum:  data.take_sha256()
+                            cksum:  if algo == Encryption::AesCbc { Some(data.take_sha256()) } else { None },
+                            etype:  algo,
+                            mime:   mime
                         };
                         let msg = data::Message {
                             id:     mid,

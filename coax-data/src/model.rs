@@ -5,6 +5,7 @@ use coax_api::types::{ClientId, ConvId, UserId, Name, Handle, Email, Phone, Labe
 use coax_api::user::{ConnectStatus, User as ApiUser, Connection as ApiConn};
 use coax_api::user::{AssetSize, AssetKey, AssetToken};
 use error::Error;
+use mime::Mime;
 use util::{from_timestamp, as_id};
 
 use schema::assets;
@@ -592,8 +593,23 @@ impl<'a> NewMessage<'a> {
     }
 }
 
-
 // Assets ///////////////////////////////////////////////////////////////////
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Encryption {
+    AesCbc = 0,
+    AesGcm = 1
+}
+
+impl Encryption {
+    pub fn from_i16(i: i16) -> Option<Encryption> {
+        match i {
+            0 => Some(Encryption::AesCbc),
+            1 => Some(Encryption::AesGcm),
+            _ => None
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetType {
@@ -637,7 +653,9 @@ pub struct RawAsset {
     pub status: i16,
     pub token:  Option<String>,
     pub key:    Vec<u8>,
-    pub cksum:  Vec<u8>
+    pub cksum:  Option<Vec<u8>>,
+    pub etype:  i16,
+    pub mime:   Option<String>
 }
 
 impl RawAsset {
@@ -654,13 +672,21 @@ impl RawAsset {
             } else {
                 return Err(Error::InvalidData("unknown asset status"))
             };
+        let et =
+            if let Some(et) = Encryption::from_i16(self.etype) {
+                et
+            } else {
+                return Err(Error::InvalidData("unknown encryption algorithm"))
+            };
         Ok(Asset {
             id:     AssetKey::new(self.id),
             atype:  ty,
             status: st,
             token:  self.token.map(AssetToken::new),
             key:    self.key,
-            cksum:  self.cksum
+            cksum:  self.cksum,
+            etype:  et,
+            mime:   self.mime.and_then(|m| m.parse().ok())
         })
     }
 }
@@ -672,7 +698,9 @@ pub struct Asset<'a> {
     pub status: AssetStatus,
     pub token:  Option<AssetToken<'a>>,
     pub key:    Vec<u8>,
-    pub cksum:  Vec<u8>
+    pub cksum:  Option<Vec<u8>>,
+    pub etype:  Encryption,
+    pub mime:   Option<Mime>
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Insertable, Queryable)]
@@ -683,23 +711,35 @@ pub struct NewAsset<'a> {
     pub status:   i16,
     pub token:    Option<&'a str>,
     pub key:      &'a [u8],
-    pub cksum:    &'a [u8]
+    pub cksum:    Option<&'a [u8]>,
+    pub etype:    i16,
+    pub mime:     Option<String>
 }
 
 impl<'a> NewAsset<'a> {
-    pub fn new(id: &'a AssetKey, ty: AssetType, st: AssetStatus, ky: &'a[u8], ck: &'a [u8]) -> NewAsset<'a> {
+    pub fn new(id: &'a AssetKey, ty: AssetType, st: AssetStatus, ky: &'a[u8], et: Encryption) -> NewAsset<'a> {
         NewAsset {
             id:     id.as_str(),
             atype:  ty as i16,
             status: st as i16,
             token:  None,
             key:    ky,
-            cksum:  ck
+            cksum:  None,
+            etype:  et as i16,
+            mime:   None
         }
     }
 
     pub fn set_token(&mut self, t: &'a AssetToken) {
         self.token = Some(t.as_str())
+    }
+
+    pub fn set_checksum(&mut self, ck: &'a [u8]) {
+        self.cksum = Some(ck)
+    }
+
+    pub fn set_mime(&mut self, m: &Mime) {
+        self.mime = Some(m.to_string())
     }
 }
 

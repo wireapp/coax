@@ -22,11 +22,13 @@ macro_rules! migration {
 migration!("2017-03-08+001", ConversationStatus, "convstatus/up.sql", "convstatus/down.sql");
 migration!("2017-03-09+001", MessageUserId, "msguserid/up.sql", "msguserid/down.sql");
 migration!("2017-03-14+001", MessageAssetKey, "msgasset/up.sql", "msgasset/down.sql");
+migration!("2017-04-26+001", AssetMimeType, "mime/up.sql", "mime/down.sql");
 
 pub fn all() -> Vec<Box<Migration>> {
     vec![
         Box::new(ConversationStatus()),
         Box::new(MessageUserId()),
-        Box::new(MessageAssetKey())
+        Box::new(MessageAssetKey()),
+        Box::new(AssetMimeType())
     ]
 }

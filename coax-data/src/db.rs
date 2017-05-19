@@ -181,6 +181,13 @@ impl Database {
         Ok(())
     }
 
+    pub fn remove_client(&self, u: &UserId, c: &ClientId) -> Result<(), Error> {
+        use schema::clients::dsl::*;
+        info!(self.logger, "remove"; "user" => %u, "client" => %c);
+        delete(clients.find((u.as_slice(), c.as_str()))).execute(&self.conn)?;
+        Ok(())
+    }
+
     pub fn connection<'a>(&self, uid: &UserId) -> Result<Option<(model::Connection, model::User<'a>)>, Error> {
         use schema::connections::dsl::*;
         debug!(self.logger, "select connection"; "to" => %uid);
@@ -353,7 +360,7 @@ impl Database {
 
     pub fn remove_members(&self, cid: &ConvId, users: &[&UserId]) -> Result<(), Error> {
         use schema::members::dsl::*;
-        debug!(self.logger, "remove members"; "conv" => %cid);
+        info!(self.logger, "remove members"; "conv" => %cid);
         let condition = conv.eq(cid.as_slice())
             .and(id.eq_any(users.iter().map(|uid| uid.as_slice())));
         delete(members.filter(condition)).execute(&self.conn)?;

@@ -1072,6 +1072,16 @@ impl Actor<Online> {
         let msg_bytes = msg.write_to_bytes()?;
         let mismatch  = error::retry(3, Duration::from_secs(3), on_error, |r| {
             if let Some(React::Other(cm)) = r {
+                for (u, cs) in &cm.redundant {
+                    for c in cs {
+                        params.remove(u, c)
+                    }
+                }
+                for (u, cs) in &cm.deleted {
+                    for c in cs {
+                        params.remove(u, c)
+                    }
+                }
                 let pkm = self.on_mismatch(cm)?;
                 for (u, cc) in pkm {
                     for (c, s) in cc {
@@ -1089,6 +1099,12 @@ impl Actor<Online> {
             self.state.user.dbase.update_message_status(&params.conv, msg.get_message_id(), MessageStatus::Sent)?;
             self.state.user.dbase.update_message_time(&params.conv, msg.get_message_id(), &mismatch.time)?;
             self.state.user.dbase.update_conv_time(&params.conv, mismatch.time.timestamp())?;
+        }
+
+        for (u, cs) in &mismatch.deleted {
+            for c in cs {
+                self.state.user.dbase.remove_client(u, c)?
+            }
         }
 
         Ok(mismatch.time)

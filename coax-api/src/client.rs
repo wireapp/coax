@@ -286,9 +286,9 @@ impl<'a> User2Clients<'a> {
     }
 }
 
-impl<'a> IntoIterator for &'a User2Clients<'a> {
-    type Item     = (&'a UserId, &'a HashSet<ClientId<'a>>);
-    type IntoIter = hash_map::Iter<'a, UserId, HashSet<ClientId<'a>>>;
+impl<'a, 'b> IntoIterator for &'a User2Clients<'b> {
+    type Item     = (&'a UserId, &'a HashSet<ClientId<'b>>);
+    type IntoIter = hash_map::Iter<'a, UserId, HashSet<ClientId<'b>>>;
 
     fn into_iter(self) -> Self::IntoIter {
         self.value.iter()

@@ -161,6 +161,19 @@ pub mod send {
             s.save()?;
             Ok(())
         }
+
+        pub fn remove(&mut self, u: &UserId, c: &ClientId<'static>) {
+            let user_present =
+                if let Some(ref mut clients) = self.message.recipients.get_mut(u) {
+                    clients.remove(c);
+                    clients.is_empty()
+                } else {
+                    false
+                };
+            if !user_present {
+                self.message.recipients.remove(u);
+            }
+        }
     }
 
     quick_error! {

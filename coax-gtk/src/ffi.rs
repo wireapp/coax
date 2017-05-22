@@ -2,12 +2,11 @@ use std::ffi::{CStr, CString};
 use std::ptr;
 use glib::translate::ToGlibPtr;
 use glib_sys::{gpointer, g_markup_escape_text};
-use gtk::{self, Label};
-use gtk_sys::{self, GtkListBoxRow, gtk_label_set_ellipsize};
+use gtk;
+use gtk_sys::{self, GtkListBoxRow};
 use gobject_sys::{GObject, g_object_set_data_full, g_object_get_data};
 use gobject_sys::{g_signal_handler_block, g_signal_handler_unblock};
 use gobject_sys::g_object_add_weak_pointer;
-use pango_sys::PangoEllipsizeMode;
 use libc::{c_char, c_int, ssize_t};
 
 lazy_static! {
@@ -58,12 +57,6 @@ pub fn escape<'a>(s: &str) -> &'a CStr {
     unsafe {
         let ptr = g_markup_escape_text(s.as_ptr() as *const c_char, s.len() as ssize_t);
         CStr::from_ptr(ptr)
-    }
-}
-
-pub fn set_ellipsis(lbl: &Label) {
-    unsafe {
-        gtk_label_set_ellipsize(lbl.to_glib_none().0, PangoEllipsizeMode::End)
     }
 }
 

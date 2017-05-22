@@ -15,6 +15,7 @@ use gio;
 use gtk::{self, Align};
 use gtk::prelude::*;
 use mime::Mime;
+use pango::EllipsizeMode;
 use res;
 use signals::Signal;
 use util::hash;
@@ -68,8 +69,8 @@ impl Channel {
         grid.attach(&img, 0, 0, 1, 2);
 
         let name_label = gtk::Label::new(None);
+        name_label.set_ellipsize(EllipsizeMode::End);
         name_label.set_name("channel-name");
-        ffi::set_ellipsis(&name_label);
         name_label.set_max_width_chars(64);
         name_label.set_margin_left(6);
         name_label.set_margin_top(6);
@@ -80,9 +81,9 @@ impl Channel {
         grid.attach(&name_label, 1, 0, 1, 1);
 
         let sub_label = gtk::Label::new(None);
+        sub_label.set_ellipsize(EllipsizeMode::End);
         sub_label.set_name("channel-subtitle");
         sub_label.get_style_context().map(|ctx| ctx.add_class("dim-label"));
-        ffi::set_ellipsis(&sub_label);
         sub_label.set_max_width_chars(64);
         sub_label.set_margin_left(6);
         sub_label.set_margin_right(6);

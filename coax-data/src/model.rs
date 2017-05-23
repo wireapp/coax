@@ -3,6 +3,7 @@ use coax_api::client::{self, Model, Client as ApiClient};
 use coax_api::conv::{ConvType, Conversation as ApiConv};
 use coax_api::types::{ClientId, ConvId, UserId, Name, Handle, Email, Phone, Label};
 use coax_api::user::{ConnectStatus, User as ApiUser, Connection as ApiConn};
+use coax_api::user::{UserUpdate as ApiUserUpdate};
 use coax_api::user::{AssetSize, AssetKey, AssetToken};
 use error::Error;
 use mime::Mime;
@@ -117,6 +118,33 @@ impl<'a> NewUser<'a> {
                      .filter(|a| a.size == AssetSize::Preview)
                      .next()
                      .map(|a| a.key.as_str())
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, AsChangeset)]
+#[table_name = "users"]
+pub struct UserUpdate<'a> {
+    pub name:   Option<&'a str>,
+    pub handle: Option<&'a str>,
+    pub email:  Option<&'a str>,
+    pub phone:  Option<&'a str>,
+    pub icon:   Option<&'a str>
+}
+
+impl<'a> UserUpdate<'a> {
+    pub fn from_api(u: &'a ApiUserUpdate) -> UserUpdate<'a> {
+        UserUpdate {
+            name:   u.name.as_ref().map(|n| n.as_str()),
+            handle: u.handle.as_ref().map(|h| h.as_str()),
+            email:  u.email.as_ref().map(|e| e.as_str()),
+            phone:  u.phone.as_ref().map(|p| p.as_str()),
+            icon:   u.assets.as_ref().and_then(|aa| {
+                aa.iter()
+                  .filter(|a| a.size == AssetSize::Preview)
+                  .next()
+                  .map(|a| a.key.as_str())
+            })
         }
     }
 }

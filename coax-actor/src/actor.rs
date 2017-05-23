@@ -1211,6 +1211,7 @@ impl Actor<Online> {
                     match ety {
                         EventType::UserClientAdd  => self.on_client_add(e)?,
                         EventType::UserConnection => self.on_user_connection(e)?,
+                        EventType::UserUpdate     => self.on_user_update(e)?,
                         _                         => {}
                     }
                 }
@@ -1280,6 +1281,18 @@ impl Actor<Online> {
             } else {
                 warn!(self.logger, "user connection peer not found"; "user" => %c.to)
             }
+        }
+        Ok(())
+    }
+
+    fn on_user_update(&mut self, e: UserEvent<'static>) -> Result<(), Error> {
+        if let UserEvent::Update(upd) = e {
+            debug!(self.logger, "user update"; "user" => %upd.id);
+            if let Err(e) = self.state.user.dbase.update_user(&upd) {
+                warn!(self.logger, "failed to apply user update"; "user" => %upd.id, "error" => %e);
+                return Ok(())
+            }
+            self.state.bcast.send(Pkg::UserUpdate(upd)).unwrap()
         }
         Ok(())
     }

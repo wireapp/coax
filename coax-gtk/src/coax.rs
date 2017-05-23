@@ -17,7 +17,7 @@ use coax_actor::config;
 use coax_api::conv::ConvType;
 use coax_api::message::send;
 use coax_api::types::{Label, Name, Email, Password, UserId, ConvId, random_uuid};
-use coax_api::user::{self, AssetKey, ConnectStatus};
+use coax_api::user::{self, AssetKey, ConnectStatus, UserUpdate};
 use coax_api_proto::{Builder as MsgBuilder, GenericMessage};
 use coax_client::error::{Error as ClientError};
 use coax_data::{self, User, Conversation, Connection, MessageData, MessageStatus, ConvStatus};
@@ -768,7 +768,8 @@ impl Coax {
             Pkg::MessageUpdate(c, m, t, s)    => self.on_message_update(state, app, m, c, t, s),
             Pkg::Conversation(c)              => self.on_conversation(state, app, c),
             Pkg::Contact(u, c)                => self.on_contact(state, app, u, c),
-            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(state, app, d, c, m, s, u)
+            Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(state, app, d, c, m, s, u),
+            Pkg::UserUpdate(u)                => self.on_user_update(u)
         }
     }
 
@@ -970,6 +971,14 @@ impl Coax {
         cont.set_enabled(state.is_online.load(Ordering::Relaxed));
         self.sig_online.connect(with!(cont => move |status| cont.set_enabled(*status)));
         self.contacts.add(&mut u, cont)
+    }
+
+    fn on_user_update(&self, update: UserUpdate<'static>) {
+        debug!(self.log, "on_user_update"; "user" => %update.id);
+        if let Some(mut u) = self.resources.user_mut(&update.id) {
+            update.name.as_ref().map(|n| u.set_name(n));
+            update.handle.as_ref().map(|h| u.set_handle(h));
+        }
     }
 
     fn on_members_change(&self, state: &Arc<State>, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {

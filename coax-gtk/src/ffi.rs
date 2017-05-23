@@ -6,7 +6,6 @@ use gtk;
 use gtk_sys::{self, GtkListBoxRow};
 use gobject_sys::{GObject, g_object_set_data_full, g_object_get_data};
 use gobject_sys::{g_signal_handler_block, g_signal_handler_unblock};
-use gobject_sys::g_object_add_weak_pointer;
 use libc::{c_char, c_int, ssize_t};
 
 lazy_static! {
@@ -74,16 +73,5 @@ pub fn set_sort_by_time(r: &gtk::ListBox) {
     unsafe {
         gtk_sys::gtk_list_box_set_sort_func(stash.0, Some(cmp_rows_by_time), ptr::null_mut(), None)
     }
-}
-
-pub fn add_weak_ptr<'a, T>(obj: &'a T) -> gpointer
-    where T: ToGlibPtr<'a, *mut GObject>
-{
-    let stash = obj.to_glib_none();
-    let mut p = stash.0 as gpointer;
-    unsafe {
-        g_object_add_weak_pointer(stash.0, &mut p)
-    }
-    p
 }
 

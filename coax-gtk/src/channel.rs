@@ -40,8 +40,19 @@ pub struct Channel {
 
 impl Channel {
     pub fn one_to_one(dt: &DateTime<Local>, id: &ConvId, u: &mut res::User) -> Channel {
-        let ch = Channel::new(ConvType::OneToOne, dt, id, &Some(Name::new(u.name.clone())), u.icon_medium());
+        let img = gtk::Image::new_from_pixbuf(Some(&u.icon_medium));
+        let ch  = Channel::new(ConvType::OneToOne, dt, id, &Some(Name::new(u.name.clone())), img.clone());
+        let nme = ch.name_label.clone();
+        let sub = ch.sub_label.clone();
         u.handle.as_ref().map(|h| ch.set_sub(h.as_str()));
+        u.sig_change.connect(move |c| {
+            match *c {
+                res::Change::Name(ref n)       => nme.set_text(n.as_str()),
+                res::Change::Handle(ref h)     => sub.set_text(h.as_str()),
+                res::Change::IconMedium(ref x) => img.set_from_pixbuf(Some(x)),
+                _                              => {}
+            }
+        });
         ch
     }
 
@@ -293,10 +304,6 @@ impl Channel {
         self.update_tstamp(dt.timestamp())
     }
 
-    pub fn set_name(&self, n: &Name) {
-        self.name_label.set_text(n.as_str())
-    }
-
     pub fn set_members_count(&self, n: usize) {
         if self.ctype == ConvType::Group {
             self.set_sub(&format!("{} participants", n))
@@ -312,6 +319,10 @@ impl Channel {
         let dstr = dt.format("%F").to_string();
         self.time_label.set_text(&tstr);
         self.date_label.set_text(&dstr)
+    }
+
+    fn set_name(&self, n: &Name) {
+        self.name_label.set_text(n.as_str())
     }
 
     fn set_sub(&self, txt: &str) {
@@ -387,7 +398,8 @@ impl TextMessage {
         grid.set_margin_bottom(6);
         grid.set_column_spacing(12);
 
-        grid.attach(&u.icon_small(), 0, 0, 1, 1);
+        let ico = gtk::Image::new_from_pixbuf(Some(&u.icon_small));
+        grid.attach(&ico, 0, 0, 1, 1);
 
         let nme = gtk::Label::new(Some(u.name.as_ref()));
         nme.set_name("text-sender");
@@ -417,6 +429,15 @@ impl TextMessage {
 
         row.add(&grid);
         row.show_all();
+
+        u.sig_change.connect(move |c| {
+            match *c {
+                res::Change::Name(ref n)      => nme.set_text(n.as_str()),
+                res::Change::Handle(ref h)    => nme.set_tooltip_text(h.as_str()),
+                res::Change::IconSmall(ref x) => ico.set_from_pixbuf(Some(x)),
+                _                             => {}
+            }
+        });
 
         TextMessage {
             datetime:  dt,
@@ -501,7 +522,7 @@ impl Image {
         grid.set_margin_bottom(6);
         grid.set_column_spacing(12);
 
-        let ico = u.icon_small();
+        let ico = gtk::Image::new_from_pixbuf(Some(&u.icon_small));
         grid.attach(&ico, 0, 0, 1, 1);
 
         let nme = gtk::Label::new(Some(u.name.as_ref()));
@@ -566,6 +587,15 @@ impl Image {
 
         row.add(&grid);
         row.show_all();
+
+        u.sig_change.connect(move |c| {
+            match *c {
+                res::Change::Name(ref n)      => nme.set_text(n.as_str()),
+                res::Change::Handle(ref h)    => nme.set_tooltip_text(h.as_str()),
+                res::Change::IconSmall(ref x) => ico.set_from_pixbuf(Some(x)),
+                _                             => {}
+            }
+        });
 
         Image {
             datetime: dt,

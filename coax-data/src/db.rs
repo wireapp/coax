@@ -21,7 +21,7 @@ use model::{self, NewMember, NewVar, MessageStatus, ConvStatus};
 use model::{NewUser, NewClient, NewConnection, NewConversation, NewNotification};
 use model::{RawUser, RawClient, RawConnection, RawConversation, RawMessage};
 use model::{NewQueueItem, QueueItem, QueueItemType, RawQueueItem};
-use model::{RawAsset, AssetStatus};
+use model::{RawAsset, AssetStatus, UserUpdate};
 use schema;
 use slog::Logger;
 use util::as_id;
@@ -117,6 +117,14 @@ impl Database {
             }
             Ok(())
         }).map_err(From::from)
+    }
+
+    pub fn update_user(&self, u: &api::user::UserUpdate) -> Result<(), Error> {
+        use schema::users::dsl::*;
+        debug!(self.logger, "update"; "user" => %u.id);
+        let chg = UserUpdate::from_api(u);
+        update(users.find(u.id.as_slice())).set(&chg).execute(&self.conn)?;
+        Ok(())
     }
 
     pub fn client<'a>(&self, uid: &UserId, cid: &ClientId) -> Result<Option<model::Client<'a>>, Error> {

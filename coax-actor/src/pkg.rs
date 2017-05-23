@@ -1,4 +1,5 @@
 use chrono::{DateTime, UTC};
+use coax_api::user::UserUpdate;
 use coax_api::types::ConvId;
 use coax_data::{User, Connection, Conversation, Message, MessageStatus, ConvStatus};
 
@@ -9,6 +10,7 @@ pub enum Pkg {
     Conversation(Conversation<'static>),
     Contact(User<'static>, Connection),
     MembersChange(ConvStatus, DateTime<UTC>, ConvId, Vec<User<'static>>, User<'static>),
+    UserUpdate(UserUpdate<'static>),
     Disconnected,
     Connected
 }

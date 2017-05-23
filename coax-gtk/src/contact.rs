@@ -101,7 +101,7 @@ impl Contact {
         grid.set_margin_right(6);
         grid.set_row_spacing(12);
 
-        let img = usr.icon_large();
+        let img = gtk::Image::new_from_pixbuf(Some(&usr.icon_large));
         img.set_margin_left(12);
         img.set_margin_top(12);
         img.set_margin_right(12);
@@ -131,6 +131,15 @@ impl Contact {
 
         row.add(&grid);
         row.show_all();
+
+        usr.sig_change.connect(with!(img => move |c| {
+            match *c {
+                res::Change::Name(ref n)      => name.set_markup(&format!("<span size=\"x-large\"><b>{}</b></span>", n)),
+                res::Change::Handle(ref h)    => handle.set_text(h.as_str()),
+                res::Change::IconLarge(ref x) => img.set_from_pixbuf(Some(x)),
+                _                             => {}
+            }
+        }));
 
         let mut cr = Contact {
             row:     row,

@@ -481,6 +481,10 @@ impl RawMessage {
                     return Err(Error::InvalidData("missing asset in message"))
                 }
             }
+            4 => {
+                let txt = self.text.ok_or(Error::InvalidData("missing text in message"))?;
+                MessageData::ConvRename(txt)
+            }
             _ => return Err(Error::InvalidData("unknown message type"))
         };
         let status =
@@ -506,7 +510,8 @@ pub enum MessageData<'a> {
     Text(String),
     Asset(Asset<'a>),
     MemberJoined(Option<User<'a>>), // None == message sender
-    MemberLeft(Option<User<'a>>) // None == message sender
+    MemberLeft(Option<User<'a>>),   // None == message sender
+    ConvRename(String)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -613,6 +618,21 @@ impl<'a> NewMessage<'a> {
             text:     None,
             user_id:  None,
             asset:    Some(asset.as_str())
+        }
+    }
+
+    pub fn rename(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, name: &'a str) -> NewMessage<'a> {
+        NewMessage {
+            id:       mid,
+            conv:     cid.as_slice(),
+            time:     t.timestamp(),
+            from_usr: from.as_slice(),
+            from_clt: None,
+            mtype:    4,
+            status:   MessageStatus::Received as i16,
+            text:     Some(name),
+            user_id:  None,
+            asset:    None
         }
     }
 

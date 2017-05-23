@@ -787,6 +787,11 @@ impl Coax {
                     match m.data {
                         MessageData::Text(txt) =>
                             ch.push_msg(&m.id, Message::text(Some(mtime), &mut usr, &txt)),
+                        MessageData::ConvRename(n) => {
+                            ch.set_name(&Name::new(n.as_str()));
+                            let txt = format!("{} has renamed this conversation to: \"{}\"", usr.name, n.as_str());
+                            ch.push_msg(&m.id, Message::system(mtime, &txt))
+                        }
                         MessageData::Asset(ast) => {
                             if ast.atype == AssetType::Image {
                                 let img = gtk::DrawingArea::new();
@@ -1395,7 +1400,9 @@ impl Coax {
                             MessageData::MemberLeft(None) =>
                                 Message::system(local, &format!("{} has left this conversation.", usr.name)),
                             MessageData::MemberLeft(Some(m)) =>
-                                Message::system(local, &format!("{} has removed {} from this conversation.", usr.name, m.name.as_str()))
+                                Message::system(local, &format!("{} has removed {} from this conversation.", usr.name, m.name.as_str())),
+                            MessageData::ConvRename(n) =>
+                                Message::system(local, &format!("{} has renamed this conversation to: \"{}\"", usr.name, n.as_str()))
                         };
                         chan.push_front_msg(&m.id, message)
                     }

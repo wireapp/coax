@@ -1219,6 +1219,7 @@ impl Actor<Online> {
                     debug!(self.logger, "event"; "type" => ?ety);
                     match ety {
                         EventType::ConvCreate      => self.on_conv_create(e)?,
+                        EventType::ConvRename      => self.on_conv_rename(e)?,
                         EventType::ConvMemberJoin  => self.on_members_change(e)?,
                         EventType::ConvMemberLeave => self.on_members_change(e)?,
                         EventType::ConvMessageAdd  => self.on_message_add(e, &mut to_confirm)?,
@@ -1294,6 +1295,50 @@ impl Actor<Online> {
             }
             self.state.bcast.send(Pkg::UserUpdate(upd)).unwrap()
         }
+        Ok(())
+    }
+
+    fn on_conv_rename(&mut self, e: ConvEvent<'static>) -> Result<(), Error> {
+        let name =
+            if let ConvEventData::Rename(name) = e.data {
+                name
+            } else {
+                return Ok(())
+            };
+
+        debug!(self.logger, "rename conversation"; "id" => %e.id);
+
+        let usr =
+            if let Some(usr) = self.resolve_user(&e.from, true)? {
+                usr
+            } else {
+                warn!(self.logger, "unknown user"; "user" => %e.from);
+                return Ok(())
+            };
+
+        if let Err(err) = self.state.user.dbase.update_conv_name(&e.id, name.as_ref()) {
+            warn!(self.logger, "failed to update conversation name"; "id" => %e.id, "error" => %err);
+            return Ok(())
+        }
+
+        let mid = random_uuid().to_string();
+
+        {
+            let nmsg = NewMessage::rename(&mid, &e.id, &e.time, &e.from, name.as_ref());
+            self.state.user.dbase.insert_message(&nmsg)?;
+        }
+
+        let message = data::Message {
+            id:     mid,
+            conv:   e.id,
+            time:   e.time,
+            user:   usr,
+            client: None,
+            status: MessageStatus::Received,
+            data:   MessageData::ConvRename(name.into())
+        };
+        self.state.bcast.send(Pkg::Message(message)).unwrap();
+
         Ok(())
     }
 

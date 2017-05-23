@@ -296,7 +296,7 @@ impl Database {
 
     pub fn update_conv_time(&self, cid: &ConvId, t: i64) -> Result<bool, Error> {
         use schema::conversations::dsl::*;
-        debug!(self.logger, "updating conversation time"; "value" => t);
+        debug!(self.logger, "updating conversation time"; "id" => %cid, "value" => t);
         update(conversations.find(cid.as_slice()))
             .set(time.eq(t))
             .execute(&self.conn)
@@ -306,12 +306,21 @@ impl Database {
 
     pub fn update_conv_status(&self, cid: &ConvId, s: ConvStatus) -> Result<bool, Error> {
         use schema::conversations::dsl::*;
-        debug!(self.logger, "updating conversation status"; "value" => ?s);
+        debug!(self.logger, "updating conversation status"; "id" => %cid, "value" => ?s);
         update(conversations.find(cid.as_slice()))
             .set(status.eq(s as i16))
             .execute(&self.conn)
             .map(|n| n > 0)
             .map_err(From::from)
+    }
+
+    pub fn update_conv_name(&self, cid: &ConvId, n: &str) -> Result<(), Error> {
+        use schema::conversations::dsl::*;
+        debug!(self.logger, "update conversation name"; "id" => %cid);
+        update(conversations.find(cid.as_slice()))
+            .set(name.eq(n))
+            .execute(&self.conn)?;
+        Ok(())
     }
 
     pub fn insert_conversation(&self, t: &DateTime<UTC>, c: &api::conv::Conversation) -> Result<(), Error> {

@@ -321,8 +321,8 @@ impl Channel {
         self.date_label.set_text(&dstr)
     }
 
-    fn set_name(&self, n: &Name) {
-        self.name_label.set_text(n.as_str())
+    pub fn set_name(&self, n: &Name) {
+        self.name_label.set_text(&ffi::escape(n.as_str()).to_string_lossy().into_owned())
     }
 
     fn set_sub(&self, txt: &str) {

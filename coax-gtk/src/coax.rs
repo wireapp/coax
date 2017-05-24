@@ -725,12 +725,12 @@ impl Coax {
             }))
             .map(with!(this => move |state| {
                 this.hide_info();
-                this.set_user_icon(&state, state.me.id.clone());
                 this.sig_online.emit(true);
                 state
             }))
             .and_then(with!(this => move |state| {
-                this.resend_messages(&state)
+                this.set_user_icon(&state, state.me.id.clone())
+                    .then(move |_| this.resend_messages(&state))
             }))
             .map_err(with!(app => move |e| {
                 this.hide_info();
@@ -769,7 +769,7 @@ impl Coax {
             Pkg::Conversation(c)              => self.on_conversation(state, app, c),
             Pkg::Contact(u, c)                => self.on_contact(state, app, u, c),
             Pkg::MembersChange(s, d, c, m, u) => self.on_members_change(state, app, d, c, m, s, u),
-            Pkg::UserUpdate(u)                => self.on_user_update(u)
+            Pkg::UserUpdate(u)                => self.on_user_update(state, u)
         }
     }
 
@@ -978,11 +978,19 @@ impl Coax {
         self.contacts.add(&mut u, cont)
     }
 
-    fn on_user_update(&self, update: UserUpdate<'static>) {
+    fn on_user_update(&self, state: &Arc<State>, update: UserUpdate<'static>) {
         debug!(self.log, "on_user_update"; "user" => %update.id);
         if let Some(mut u) = self.resources.user_mut(&update.id) {
             update.name.as_ref().map(|n| u.set_name(n));
             update.handle.as_ref().map(|h| u.set_handle(h));
+            if update.assets.is_some() {
+                let logger = self.log.clone();
+                let future = self.set_user_icon(&state, update.id)
+                    .map_err(move |e| {
+                        error!(logger, "failed to set user icon"; "error" => ?e)
+                    });
+                self.futures.send(boxed(future)).unwrap()
+            }
         }
     }
 

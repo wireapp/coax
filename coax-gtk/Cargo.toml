@@ -29,7 +29,7 @@ coax-net           = { path = "../coax-net" }
 cookie             = ">= 0.6.1"
 cryptobox          = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 fnv                = ">= 1.0"
-futures            = { version = ">= 0.1", features = ["use_std"] }
+futures            = { version = ">= 0.1.14", features = ["use_std"] }
 futures-cpupool    = ">= 0.1"
 gdk                = ">= 0.5.3"
 gdk-pixbuf         = ">= 0.1.3"

@@ -1,10 +1,10 @@
-use chrono::{DateTime, UTC, NaiveDateTime};
+use chrono::{DateTime, Utc, NaiveDateTime};
 use coax_api::types::Id;
 use error::Error;
 
-pub fn from_timestamp(t: i64) -> DateTime<UTC> {
+pub fn from_timestamp(t: i64) -> DateTime<Utc> {
     let ndt = NaiveDateTime::from_timestamp(t, 0);
-    DateTime::from_utc(ndt, UTC)
+    DateTime::from_utc(ndt, Utc)
 }
 
 pub fn as_id<T>(b: &[u8], m: &'static str) -> Result<Id<T>, Error> {

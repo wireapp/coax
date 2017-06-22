@@ -1,4 +1,4 @@
-use chrono::UTC;
+use chrono::Utc;
 use diesel::connection::SimpleConnection;
 use diesel::prelude::*;
 use diesel::sqlite::SqliteConnection;
@@ -37,7 +37,7 @@ impl ProfileDb {
         debug!(self.logger, "inserting profile"; "id" => %u.id);
         let p = model::NewProfile {
             id:     u.id.as_slice(),
-            time:   UTC::now().timestamp(),
+            time:   Utc::now().timestamp(),
             name:   u.name.as_str(),
             handle: None, // TODO
             email:  u.email.as_ref().map(|e| e.as_str()),

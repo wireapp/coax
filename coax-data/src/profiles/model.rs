@@ -1,4 +1,4 @@
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 use coax_api::types::{UserId, Name, Email, Phone};
 use error::Error;
 use super::schema::profiles;
@@ -31,7 +31,7 @@ impl RawProfile {
 #[derive(Debug, Clone)]
 pub struct Profile<'a> {
     pub id:     UserId,
-    pub time:   DateTime<UTC>,
+    pub time:   DateTime<Utc>,
     pub name:   Name<'a>,
     pub handle: Option<Name<'a>>,
     pub email:  Option<Email<'a>>,

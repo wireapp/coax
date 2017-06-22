@@ -3,7 +3,7 @@ use std::fmt;
 use std::path::Path;
 use std::marker::PhantomData;
 
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 use coax_api as api;
 use coax_api::types::{ConvId, UserId, ClientId, NotifId};
 use coax_api::user::{AssetKey, ConnectStatus};
@@ -323,7 +323,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn insert_conversation(&self, t: &DateTime<UTC>, c: &api::conv::Conversation) -> Result<(), Error> {
+    pub fn insert_conversation(&self, t: &DateTime<Utc>, c: &api::conv::Conversation) -> Result<(), Error> {
         use schema::conversations::dsl::*;
         debug!(self.logger, "insert"; "conv" => %c.id);
         let ci = c.id.as_slice();
@@ -466,7 +466,7 @@ impl Database {
             .map_err(From::from)
     }
 
-    pub fn update_message_time(&self, cid: &ConvId, mid: &str, t: &DateTime<UTC>) -> Result<bool, Error> {
+    pub fn update_message_time(&self, cid: &ConvId, mid: &str, t: &DateTime<Utc>) -> Result<bool, Error> {
         use schema::messages::dsl::*;
         debug!(self.logger, "updating message time"; "id" => mid, "time" => t.timestamp());
         update(messages.find((cid.as_slice(), mid)))

@@ -18,7 +18,7 @@ prod = ["coax-actor/prod"]
 
 [dependencies]
 chashmap           = ">= 2.2"
-chrono             = ">= 0.2"
+chrono             = ">= 0.4"
 clap               = ">= 2.0"
 coax-actor         = { path = "../coax-actor" }
 coax-api           = { path = "../coax-api" }
@@ -42,7 +42,7 @@ gtk-sys            = ">= 0.3.4"
 json-codec         = ">= 0.4"
 lazy_static        = ">= 0.2"
 libc               = ">= 0.2"
-mime               = { version = ">= 0.2", default-features = false }
+mime               = { version = ">= 0.3", default-features = false }
 notify-rust        = ">= 3.3"
 openssl            = ">= 0.9"
 quick-error        = ">= 1.1"

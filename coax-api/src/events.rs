@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use coax_api_proto::messages::GenericMessage;
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 use client::Client;
 use conv::{Conversation, Message, MemberUpdate};
 use json::ast::{Json, Ref};
@@ -154,7 +154,7 @@ impl<'a> FromJson for Event<'a> {
 pub struct ConvEvent<'a> {
     pub id:   ConvId,
     pub from: UserId,
-    pub time: DateTime<UTC>,
+    pub time: DateTime<Utc>,
     pub data: ConvEventData<'a>
 }
 

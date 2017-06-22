@@ -1,7 +1,7 @@
 use std::borrow::{Borrow, Cow};
 use std::io::Write;
 
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 use json::{ToJson, Encoder, EncodeResult};
 use json::{FromJson, Decoder, DecodeError, DecodeResult, Utf8Buffer};
 use json::ast::{Json, Ref};
@@ -326,11 +326,11 @@ pub struct Connection<'a> {
     pub from:        UserId,
     pub to:          UserId,
     pub message:     Option<Cow<'a, str>>,
-    pub last_update: DateTime<UTC>
+    pub last_update: DateTime<Utc>
 }
 
 impl<'a> Connection<'a> {
-    pub fn new(s: ConnectStatus, c: ConvId, from: UserId, to: UserId, tm: DateTime<UTC>) -> Connection<'a> {
+    pub fn new(s: ConnectStatus, c: ConvId, from: UserId, to: UserId, tm: DateTime<Utc>) -> Connection<'a> {
         Connection {
             status:      s,
             conv:        c,

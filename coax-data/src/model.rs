@@ -1,4 +1,4 @@
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 use coax_api::client::{self, Model, Client as ApiClient};
 use coax_api::conv::{ConvType, Conversation as ApiConv};
 use coax_api::types::{ClientId, ConvId, UserId, Name, Handle, Email, Phone, Label};
@@ -186,7 +186,7 @@ pub struct Client<'a> {
     pub user:     UserId,
     pub class:    Option<client::Class>,
     pub verified: bool,
-    pub time:     Option<DateTime<UTC>>,
+    pub time:     Option<DateTime<Utc>>,
     pub ctype:    Option<client::Type>,
     pub label:    Option<Label<'a>>,
     pub model:    Option<Model<'a>>,
@@ -296,13 +296,13 @@ pub struct Conversation<'a> {
     pub ctype:   ConvType,
     pub creator: UserId,
     pub muted:   bool,
-    pub time:    DateTime<UTC>,
+    pub time:    DateTime<Utc>,
     pub status:  ConvStatus,
     pub members: Vec<UserId>
 }
 
 impl<'a> Conversation<'a> {
-    pub fn from_api(t: DateTime<UTC>, c: ApiConv<'a>) -> Conversation<'a> {
+    pub fn from_api(t: DateTime<Utc>, c: ApiConv<'a>) -> Conversation<'a> {
         let mut mm = c.members.others.into_iter().map(|m| m.id).collect() : Vec<UserId>;
         mm.push(c.members.me.id);
         Conversation {
@@ -339,7 +339,7 @@ pub struct NewConversation<'a> {
 }
 
 impl<'a> NewConversation<'a> {
-    pub fn from_api(t: &DateTime<UTC>, c: &'a ApiConv) -> NewConversation<'a> {
+    pub fn from_api(t: &DateTime<Utc>, c: &'a ApiConv) -> NewConversation<'a> {
         NewConversation {
             id:       c.id.as_slice(),
             name:     c.name.as_ref().map(|n| n.as_str()),
@@ -538,7 +538,7 @@ impl MessageStatus {
 pub struct Message<'a> {
     pub id:     String,
     pub conv:   ConvId,
-    pub time:   DateTime<UTC>,
+    pub time:   DateTime<Utc>,
     pub user:   User<'a>,
     pub client: Option<ClientId<'a>>,
     pub status: MessageStatus,
@@ -561,7 +561,7 @@ pub struct NewMessage<'a> {
 }
 
 impl<'a> NewMessage<'a> {
-    pub fn text(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, client: &'a ClientId, txt: &'a str) -> NewMessage<'a> {
+    pub fn text(mid: &'a str, cid: &'a ConvId, t: &DateTime<Utc>, from: &'a UserId, client: &'a ClientId, txt: &'a str) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),
@@ -576,7 +576,7 @@ impl<'a> NewMessage<'a> {
         }
     }
 
-    pub fn joined(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, user: &'a UserId) -> NewMessage<'a> {
+    pub fn joined(mid: &'a str, cid: &'a ConvId, t: &DateTime<Utc>, from: &'a UserId, user: &'a UserId) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),
@@ -591,7 +591,7 @@ impl<'a> NewMessage<'a> {
         }
     }
 
-    pub fn left(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, user: &'a UserId) -> NewMessage<'a> {
+    pub fn left(mid: &'a str, cid: &'a ConvId, t: &DateTime<Utc>, from: &'a UserId, user: &'a UserId) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),
@@ -606,7 +606,7 @@ impl<'a> NewMessage<'a> {
         }
     }
 
-    pub fn asset(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, client: &'a ClientId, asset: &'a AssetKey) -> NewMessage<'a> {
+    pub fn asset(mid: &'a str, cid: &'a ConvId, t: &DateTime<Utc>, from: &'a UserId, client: &'a ClientId, asset: &'a AssetKey) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),
@@ -621,7 +621,7 @@ impl<'a> NewMessage<'a> {
         }
     }
 
-    pub fn rename(mid: &'a str, cid: &'a ConvId, t: &DateTime<UTC>, from: &'a UserId, name: &'a str) -> NewMessage<'a> {
+    pub fn rename(mid: &'a str, cid: &'a ConvId, t: &DateTime<Utc>, from: &'a UserId, name: &'a str) -> NewMessage<'a> {
         NewMessage {
             id:       mid,
             conv:     cid.as_slice(),

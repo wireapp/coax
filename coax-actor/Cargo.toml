@@ -10,7 +10,7 @@ description = "Higher-level client for Wire with persistent storage."
 
 [dependencies]
 app_dirs        = ">= 1.1"
-chrono          = ">= 0.2"
+chrono          = ">= 0.4"
 coax-api        = { path = "../coax-api" }
 coax-api-proto  = { path = "../coax-api-proto" }
 coax-client     = { path = "../coax-client" }

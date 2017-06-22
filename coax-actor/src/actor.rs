@@ -10,7 +10,7 @@ use std::sync::mpsc::Sender;
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 use coax_api as api;
 use coax_api::client::{self, Client as ApiClient, ClientMismatch, SignalingKeys, Model};
 use coax_api::conv::ConvType;
@@ -818,7 +818,7 @@ impl Actor<Online> {
                     info!(self.logger, "ignoring 1:1 conversation without peer"; "conv" => %c.id);
                     return Ok(None)
                 }
-                let t = UTC::now();
+                let t = Utc::now();
                 self.state.user.dbase.insert_conversation(&t, &c)?;
                 Ok(Some(Conversation::from_api(t, c)))
             }
@@ -937,7 +937,7 @@ impl Actor<Online> {
         }
         let mut c = api::conv::Conversation::new(conv_id, self.me().id.clone(), mm);
         c.set_name(name.acquire());
-        let t = UTC::now();
+        let t = Utc::now();
         self.state.user.dbase.insert_conversation(&t, &c)?;
         Ok(Conversation::from_api(t, c))
     }
@@ -1054,7 +1054,7 @@ impl Actor<Online> {
     }
 
     /// Send a message to some conversation.
-    pub fn send_message(&mut self, params: &mut send::Params, msg: &GenericMessage, del: Delivery) -> Result<DateTime<UTC>, Error> {
+    pub fn send_message(&mut self, params: &mut send::Params, msg: &GenericMessage, del: Delivery) -> Result<DateTime<Utc>, Error> {
         debug!(self.logger, "sending message"; "conv" => %params.conv, "id" => msg.get_message_id());
         let on_error = |_, e| {
             if error::is_unauthorised(&e) {
@@ -1755,7 +1755,7 @@ fn set_access_token(db: &Database, t: &AccessToken) -> Result<(), Error> {
 }
 
 fn save_message(db: &Database, cid: &ConvId, uid: &UserId, clt: &ClientId, msg: &GenericMessage) -> Result<(), Error> {
-    let time = UTC::now();
+    let time = Utc::now();
     let text = msg.get_text().get_content(); // TODO
     let new_msg = NewMessage::text(msg.get_message_id(), cid, &time, uid, clt, text);
     db.insert_message(&new_msg)?;

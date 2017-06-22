@@ -562,7 +562,7 @@ impl Image {
                 f.set_name("Images");
                 f.add_mime_type(&m.to_string());
                 dialog.add_filter(&f);
-                dialog.set_current_name(&format!("Image.{}", m.1.as_str()))
+                dialog.set_current_name(&format!("Image.{}", &m.subtype()))
             }
             dialog.add_button("Cancel", gtk::ResponseType::Cancel.into());
             dialog.add_button("Save", gtk::ResponseType::Accept.into());

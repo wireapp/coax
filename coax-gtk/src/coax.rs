@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use chashmap::CHashMap;
 use channel::{Channel, Message, TextMessage, Image};
-use chrono::{DateTime, Local, UTC};
+use chrono::{DateTime, Local, Utc};
 use coax_actor::{self, Actor, Pkg, Delivery};
 use coax_actor::actor::{Offline, Online};
 use coax_actor::config;
@@ -845,7 +845,7 @@ impl Coax {
         }
     }
 
-    fn on_message_update(&self, state: &Arc<State>, app: &gtk::Application, id: String, c: ConvId, t: DateTime<UTC>, s: MessageStatus) {
+    fn on_message_update(&self, state: &Arc<State>, app: &gtk::Application, id: String, c: ConvId, t: DateTime<Utc>, s: MessageStatus) {
         debug!(self.log, "on_message_update"; "conv" => %c, "id" => %id);
         if let Some(ch) = self.channels.get(&c) {
             if let Some(mut m) = ch.get_msg_mut(&id) {
@@ -994,7 +994,7 @@ impl Coax {
         }
     }
 
-    fn on_members_change(&self, state: &Arc<State>, app: &gtk::Application, dt: DateTime<UTC>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
+    fn on_members_change(&self, state: &Arc<State>, app: &gtk::Application, dt: DateTime<Utc>, cid: ConvId, members: Vec<User<'static>>, s: ConvStatus, from: User<'static>) {
         debug!(self.log, "on_members_change"; "conv" => %cid);
         if let Some(chan) = self.channels.get(&cid) {
             let local = dt.with_timezone(&self.timezone);
@@ -1464,7 +1464,7 @@ impl Coax {
         }))
     }
 
-    fn send(&self, state: &Arc<State>, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<UTC>, Error=Error> {
+    fn send(&self, state: &Arc<State>, mut params: send::Params, msg: GenericMessage, del: Delivery) -> impl Future<Item=DateTime<Utc>, Error=Error> {
         debug!(self.log, "send future"; "conv" => %params.conv, "id" => msg.get_message_id());
         let logger = self.log.clone();
         self.pool_on.spawn_fn(with!(state => move || {

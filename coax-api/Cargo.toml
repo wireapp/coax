@@ -10,7 +10,7 @@ description = "Wire API type definitions"
 
 [dependencies]
 base64          = ">= 0.5"
-chrono          = ">= 0.2"
+chrono          = ">= 0.4"
 coax-api-proto  = { path = "../coax-api-proto" }
 cookie          = ">= 0.6.1"
 cryptobox       = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }

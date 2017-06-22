@@ -9,7 +9,7 @@ homepage    = "https://github.com/wireapp/coax"
 description = "Storage layer for coax client"
 
 [dependencies]
-chrono          = ">= 0.2"
+chrono          = ">= 0.4"
 coax-api        = { path = "../coax-api" }
 coax-api-proto  = { path = "../coax-api-proto" }
 diesel          = { version = ">= 0.11", default-features = false, features = ["sqlite"] }

@@ -4,7 +4,7 @@ use std::collections::hash_map::{self, Entry};
 use std::io::Write;
 use std::iter::FromIterator;
 
-use chrono::{DateTime, UTC};
+use chrono::{DateTime, Utc};
 use json::{ToJson, Encoder, EncodeResult};
 use json::{FromJson, Decoder, DecodeError, DecodeResult, Utf8Buffer};
 use json::ast::{Json, Ref};
@@ -20,7 +20,7 @@ json_str_type!(Model);
 pub struct Client<'a> {
     pub id:           ClientId<'a>,
     pub class:        Option<Class>,
-    pub time:         Option<DateTime<UTC>>,
+    pub time:         Option<DateTime<Utc>>,
     pub ctype:        Option<Type>,
     pub cookie_label: Option<Label<'a>>,
     pub label:        Option<Label<'a>>,
@@ -40,7 +40,7 @@ impl<'a> Client<'a> {
         }
     }
 
-    pub fn set_time(&mut self, t: DateTime<UTC>) {
+    pub fn set_time(&mut self, t: DateTime<Utc>) {
         self.time = Some(t)
     }
 
@@ -330,7 +330,7 @@ impl<'a> FromJson for User2Clients<'a> {
 
 #[derive(Clone, Debug)]
 pub struct ClientMismatch<'a> {
-    pub time:      DateTime<UTC>,
+    pub time:      DateTime<Utc>,
     pub redundant: User2Clients<'a>,
     pub missing:   User2Clients<'a>,
     pub deleted:   User2Clients<'a>

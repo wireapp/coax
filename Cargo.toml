@@ -5,8 +5,6 @@ members = [
     "coax-api-proto",
     "coax-client",
     "coax-data",
-    "coax-gtk",
-    "coax-net",
-    "coax-ws"
+    "coax-gtk"
 ]
 

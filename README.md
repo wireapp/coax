@@ -41,13 +41,6 @@ to compare identity keys.
 
 This workspace consists of the following libaries:
 
-**[coax-net](https://github.com/wireapp/coax/tree/master/coax-net)**:
-Basic networking support (e.g. TLS connections) plus a tiny subset of
-HTTP/1.1.
-
-**[coax-ws](https://github.com/wireapp/coax/tree/master/coax-ws)**:
-Implements a subset of RFC 6455 (websocket protocol).
-
 **[coax-data](https://github.com/wireapp/coax/tree/master/coax-data)**:
 Storage support based on SQLite.
 

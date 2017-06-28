@@ -12,7 +12,7 @@ use coax_api::token;
 use coax_api::types::UserId;
 use coax_client::error as client;
 use coax_data;
-use coax_net::rpc;
+use hyper::StatusCode;
 use json::{DecodeError, EncodeError};
 use openssl;
 use protobuf::ProtobufError;
@@ -184,42 +184,18 @@ pub fn retry3x<F, R, T>(f: F) -> Result<T, Error>
 }
 
 pub fn can_retry(err: &Error) -> bool {
-    fn kind_match(k: io::ErrorKind) -> bool {
-        match k {
-            io::ErrorKind::UnexpectedEof | io::ErrorKind::BrokenPipe => true,
-            _ => false
-        }
-    }
-    match *err {
-        Error::Client(client::Error::Rpc(rpc::Error::Io(ref e)))        => kind_match(e.kind()),
-        Error::Client(client::Error::InvalidState)                      => true,
-        Error::Login(client::Error::Rpc(rpc::Error::Io(ref e)))         => kind_match(e.kind()),
-        Error::Login(client::Error::InvalidState)                       => true,
-        Error::RegUser(client::Error::Rpc(rpc::Error::Io(ref e)))       => kind_match(e.kind()),
-        Error::RegUser(client::Error::InvalidState)                     => true,
-        Error::RegClient(client::Error::Rpc(rpc::Error::Io(ref e)))     => kind_match(e.kind()),
-        Error::RegClient(client::Error::InvalidState)                   => true,
-        Error::Connect(client::Error::Rpc(rpc::Error::Io(ref e)))       => kind_match(e.kind()),
-        Error::Connect(client::Error::InvalidState)                     => true,
-        Error::ConnectUpdate(client::Error::Rpc(rpc::Error::Io(ref e))) => kind_match(e.kind()),
-        Error::ConnectUpdate(client::Error::InvalidState)               => true,
-        Error::Renew(client::Error::Rpc(rpc::Error::Io(ref e)))         => kind_match(e.kind()),
-        Error::Renew(client::Error::InvalidState)                       => true,
-        Error::MsgSend(client::Error::Rpc(rpc::Error::Io(ref e)))       => kind_match(e.kind()),
-        Error::MsgSend(client::Error::InvalidState)                     => true,
-        _                                                               => false
-    }
+    true
 }
 
 pub fn is_unauthorised(err: &Error) -> bool {
     match *err {
-        Error::Client(client::Error::Response(401, _))        => true,
-        Error::Login(client::Error::Response(401, _))         => true,
-        Error::RegUser(client::Error::Response(401, _))       => true,
-        Error::RegClient(client::Error::Response(401, _))     => true,
-        Error::Connect(client::Error::Response(401, _))       => true,
-        Error::ConnectUpdate(client::Error::Response(401, _)) => true,
-        Error::MsgSend(client::Error::Response(401, _))       => true,
-        _                                                     => false
+        Error::Client(client::Error::Status(StatusCode::Unauthorized))        => true,
+        Error::Login(client::Error::Status(StatusCode::Unauthorized))         => true,
+        Error::RegUser(client::Error::Status(StatusCode::Unauthorized))       => true,
+        Error::RegClient(client::Error::Status(StatusCode::Unauthorized))     => true,
+        Error::Connect(client::Error::Status(StatusCode::Unauthorized))       => true,
+        Error::ConnectUpdate(client::Error::Status(StatusCode::Unauthorized)) => true,
+        Error::MsgSend(client::Error::Status(StatusCode::Unauthorized))       => true,
+        _                                                                     => false
     }
 }

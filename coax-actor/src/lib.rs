@@ -1,4 +1,4 @@
-#![feature(type_ascription)]
+#![feature(type_ascription, conservative_impl_trait)]
 #![recursion_limit = "1024"]
 
 extern crate app_dirs;
@@ -7,11 +7,11 @@ extern crate coax_api;
 extern crate coax_api_proto;
 extern crate coax_client;
 extern crate coax_data;
-extern crate coax_net;
-extern crate coax_ws;
-extern crate cookie;
 extern crate cryptobox;
+extern crate futures;
+extern crate hyper;
 extern crate json;
+extern crate native_tls;
 extern crate openssl;
 extern crate proteus;
 extern crate protobuf;
@@ -32,6 +32,6 @@ pub mod config;
 pub mod error;
 pub mod pkg;
 
-pub use actor::{Actor, Inbox, Delivery};
+pub use actor::{Actor, Delivery};
 pub use error::Error;
 pub use pkg::Pkg;

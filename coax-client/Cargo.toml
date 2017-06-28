@@ -9,13 +9,16 @@ homepage    = "https://github.com/wireapp/coax"
 description = "Wire API client"
 
 [dependencies]
+bytes       = ">= 0.4"
 coax-api    = { path = "../coax-api" }
-coax-net    = { path = "../coax-net" }
-coax-ws     = { path = "../coax-ws" }
-cookie      = ">= 0.6.1"
 cryptobox   = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
+futures     = { version = ">= 0.1.14", features = ["use_std"] }
+hyper       = ">= 0.11"
+hyper-tls   = ">= 0.1"
 json-codec  = ">= 0.4"
+native-tls  = ">= 0.1"
 slog        = ">= 2.0"
-openssl     = ">= 0.9"
+tokio-core  = ">= 0.1"
 url         = ">= 1.1"
+websocket   = ">= 0.20"
 

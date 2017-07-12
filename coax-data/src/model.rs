@@ -23,11 +23,6 @@ use schema::outbox;
 // User /////////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
-#[has_many(conversations, foreign_key = "creator")]
-#[has_many(clients, foreign_key = "user")]
-#[has_many(connections, foreign_key = "id")]
-#[has_many(members, foreign_key = "id")]
-#[has_many(messages, foreign_key = "from_usr")]
 #[table_name = "users"]
 pub struct RawUser {
     pub id:     Vec<u8>,
@@ -255,8 +250,6 @@ impl ConvStatus {
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
 #[belongs_to(RawUser, foreign_key = "creator")]
-#[has_many(members, foreign_key = "conv")]
-#[has_many(messages, foreign_key = "conv")]
 #[table_name = "conversations"]
 pub struct RawConversation {
     pub id:      Vec<u8>,

@@ -750,7 +750,7 @@ impl<'a> Client<'a> {
         let tkn  = self.rpc.recv_header(tkn)?;
         let json_resp = is_json(self.response());
         match self.response().status() {
-            200 if json_resp => self.rpc.reader(tkn).map_err(From::from),
+            200 | 404 if json_resp => self.rpc.reader(tkn).map_err(From::from),
             num => {
                 let e = self.error_response(tkn, json_resp)?;
                 error!(self.log, "error getting events"; "status" => num, "error" => ?e);

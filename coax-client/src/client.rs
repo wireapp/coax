@@ -1,5 +1,5 @@
 use std::io::Cursor;
-use std::str::FromStr;
+use std::str::{self, FromStr};
 
 use bytes::{BufMut, BytesMut};
 use coax_api::conv::{self, Conversation};
@@ -10,13 +10,14 @@ use coax_api::prekeys::{ClientPreKey, ClientPreKeys, PreKeyMap};
 use coax_api::token::{self, AccessToken};
 use coax_api::types::{UserId, ClientId, ConvId, NotifId, ApiError, Page};
 use coax_api::user::{self, User, AssetKey, AssetToken};
+use cookie::Cookie;
 use error::{Error, Void};
 use futures::{Future, Stream};
 use futures::future::{self, Either, FutureResult};
-use hyper::{self, Request, Response, Body, Uri, Method, StatusCode};
+use hyper::{self, Request, Response, Body, Headers, Uri, Method, StatusCode};
 use hyper::client::HttpConnector;
 use hyper::error::UriError;
-use hyper::header::{Authorization, Bearer, ContentType, Cookie, Accept, Location};
+use hyper::header::{self, Authorization, Bearer, ContentType, Accept, Location};
 use hyper_tls::HttpsConnector;
 use json::{ToJson, FromJson};
 use json::decoder::{Decoder, DecodeError, ReadIter};
@@ -26,7 +27,7 @@ use slog::Logger;
 use tokio_core::reactor::Handle;
 use url::Url;
 
-mod header {
+mod headers {
     header! {
         (AssetToken, "Asset-Token") => [String]
     }
@@ -71,32 +72,51 @@ macro_rules! handle_error {
     }}
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Client {
     logger: Logger,
     base:   Url,
+    tls:    TlsConnector,
     bytes:  BytesMut,
     client: hyper::Client<HttpsConnector<HttpConnector>, Body>
 }
 
 impl Client {
-    pub fn new(g: &Logger, base: Url, tls: TlsConnector, hdl: &Handle) -> Result<Client, Error<Void>> {
+    pub fn new(g: &Logger, base: Url, tls: &TlsConnector, hdl: &Handle) -> Result<Client, Error<Void>> {
         debug!(g, "new client"; "url" => %base);
         Ok(Client {
             logger: g.new(o!("context" => "Client")),
             base:   base,
+            tls:    tls.clone(),
             bytes:  BytesMut::with_capacity(0x80000),
             client: hyper::Client::configure()
-                .connector(HttpsConnector::from((HttpConnector::new(1, hdl), tls)))
+                .connector(HttpsConnector::from((HttpConnector::new(1, hdl), tls.clone())))
                 .build(hdl)
         })
     }
 
+    pub fn tls(&self) -> &TlsConnector {
+        &self.tls
+    }
+
+    pub fn get(&self) -> impl Future<Item=impl Stream<Item=hyper::Chunk, Error=Error<Void>>, Error=Error<Void>> {
+        match Uri::from_str(self.base.as_str()) {
+            Ok(uri) => Either::A(self.client.request(Request::new(Method::Get, uri)).from_err()
+                .and_then(|res| {
+                    if res.status() == StatusCode::Ok {
+                        future::ok(res.body().from_err())
+                    } else {
+                        future::err(Error::Status(res.status()))
+                    }
+                })),
+            Err(e) => Either::B(future::err(e.into()))
+        }
+    }
+
     /// Renew an `AccessToken` [`POST /access`].
-    pub fn access_renew<'a>(&self, c: &Cookie, t: Option<&AccessToken>) -> impl Future<Item=token::Credentials<'static, Option<Cookie>>, Error=Error<token::renew::Error>> + 'a {
+    pub fn access_renew<'a>(&self, c: &Cookie, t: Option<&AccessToken>) -> impl Future<Item=token::Credentials<'static, Option<Cookie<'static>>>, Error=Error<token::renew::Error>> + 'a {
         info!(self.logger, "renewing access token");
 
-        let cookie = c.clone();
         let logger = self.logger.clone();
         let client = self.client.clone();
         let bytes  = self.bytes.clone();
@@ -104,15 +124,21 @@ impl Client {
         let mut url = self.base.clone();
         url.set_path("/access");
 
+        let mut cook = header::Cookie::new();
+        cook.append(String::from(c.name()), String::from(c.value()));
+
         request(Method::Post, &url, t)
             .and_then(move |mut req| {
-                req.headers_mut().set(cookie);
+                req.headers_mut().set(cook);
                 client.request(req).from_err()
             })
             .and_then(move |res| {
                 if res.status() == StatusCode::Ok && is_json(&res) {
-                    let cookie = res.headers().get().cloned();
-                    Either::A(json(res.body(), bytes).map(|token| token::Credentials::new(token, cookie)))
+                    let future = future::result(cookie("zuid", res.headers()))
+                        .and_then(|cookie| {
+                            json(res.body(), bytes).map(|token| token::Credentials::new(token, cookie))
+                        });
+                    Either::A(future)
                 } else {
                     Either::B(handle_error!(logger, "renew access token", res, bytes))
                 }
@@ -120,7 +146,7 @@ impl Client {
     }
 
     /// Login some user [`POST /login`].
-    pub fn user_login<'a>(&self, p: user::login::Params<'a>) -> impl Future<Item=token::Credentials<'static, Cookie>, Error=Error<user::login::Error>> + 'a {
+    pub fn user_login<'a>(&self, p: user::login::Params<'a>) -> impl Future<Item=token::Credentials<'static, Cookie<'static>>, Error=Error<user::login::Error>> + 'a {
         info!(self.logger, "login"; "email" => ?p.email, "phone" => ?p.phone);
 
         let logger = self.logger.clone();
@@ -136,12 +162,14 @@ impl Client {
             .and_then(move |req| client.request(req).from_err())
             .and_then(move |res| {
                 if res.status() == StatusCode::Ok && is_json(&res) {
-                    let future =
-                        if let Some(cookie) = res.headers().get().cloned() {
-                            Either::A(json(res.body(), bytes).map(|token| token::Credentials::new(token, cookie)))
-                        } else {
-                            Either::B(future::err(Error::Error(user::login::Error::MissingCookie)))
-                        };
+                    let future = future::result(cookie("zuid", res.headers()))
+                        .and_then(|cookie| {
+                            if let Some(c) = cookie {
+                                Either::A(json(res.body(), bytes).map(|token| token::Credentials::new(token, c)))
+                            } else {
+                                Either::B(future::err(Error::Error(user::login::Error::MissingCookie)))
+                            }
+                        });
                     Either::A(future)
                 } else {
                     Either::B(handle_error!(logger, "user login", res, bytes))
@@ -153,7 +181,6 @@ impl Client {
     pub fn user_logout<'a>(&self, c: &Cookie, t: &AccessToken) -> impl Future<Item=(), Error=Error<Void>> + 'a {
         info!(self.logger, "logout");
 
-        let cookie = c.clone();
         let logger = self.logger.clone();
         let client = self.client.clone();
         let bytes  = self.bytes.clone();
@@ -161,9 +188,12 @@ impl Client {
         let mut url = self.base.clone();
         url.set_path("/access/logout");
 
+        let mut cook = header::Cookie::new();
+        cook.append(String::from(c.name()), String::from(c.value()));
+
         request(Method::Post, &url, Some(t))
             .and_then(move |mut req| {
-                req.headers_mut().set(cookie);
+                req.headers_mut().set(cook);
                 client.request(req).from_err()
             })
             .and_then(move |res| {
@@ -351,7 +381,7 @@ impl Client {
 
         let logger = self.logger.clone();
         let client = self.client.clone();
-        let atoken = a.map(|a| header::AssetToken(a.as_str().to_string()));
+        let atoken = a.map(|a| headers::AssetToken(a.as_str().to_string()));
         let bytes  = self.bytes.clone();
 
         let mut url = self.base.clone();
@@ -805,5 +835,18 @@ fn drain<E: From<hyper::Error>>(b: Body) -> impl Future<Item=(), Error=E> {
 #[inline]
 fn is_json(res: &Response) -> bool {
     res.headers().get() == Some(&ContentType::json())
+}
+
+#[inline]
+fn cookie<E>(n: &str, h: &Headers) -> Result<Option<Cookie<'static>>, Error<E>> {
+    if let Some(cookies) = h.get_raw("cookie") {
+        for line in cookies {
+            let c: Cookie = str::from_utf8(line).map_err(From::from).and_then(|s| s.parse())?;
+            if c.name() == n {
+                return Ok(Some(c))
+            }
+        }
+    }
+    Ok(None)
 }
 

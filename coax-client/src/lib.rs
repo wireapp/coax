@@ -2,6 +2,7 @@
 
 extern crate bytes;
 extern crate coax_api;
+extern crate cookie;
 extern crate cryptobox;
 #[macro_use]
 extern crate futures;

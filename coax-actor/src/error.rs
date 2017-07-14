@@ -131,62 +131,6 @@ impl From<FileStoreError> for Error {
     }
 }
 
-// Error retry logic ////////////////////////////////////////////////////////
-
-#[derive(Debug)]
-pub enum React<R> {
-    Retry,
-    Renew,
-    Abort(Error),
-    Other(R)
-}
-
-pub fn retry<F, G, R, T>(iters: usize, delay: Duration, mut check: G, mut action: F) -> Result<T, Error>
-    where F: FnMut(Option<React<R>>) -> Result<T, Error>,
-          G: FnMut(usize, Error) -> React<R>
-{
-    let mut i = 1;
-    let mut r = None;
-    loop {
-        match action(r) {
-            Ok(t)  => return Ok(t),
-            Err(e) => {
-                if i >= iters {
-                    return Err(e)
-                }
-                match check(i, e) {
-                    React::Abort(e) => return Err(e),
-                    reaction        => r = Some(reaction)
-                }
-            }
-        }
-        if i > 1 {
-            std::thread::sleep(delay)
-        }
-        i += 1
-    }
-}
-
-fn on_error<R>(_: usize, e: Error) -> React<R> {
-    if is_unauthorised(&e) {
-        React::Renew
-    } else if can_retry(&e) {
-        React::Retry
-    } else {
-        React::Abort(e)
-    }
-}
-
-pub fn retry3x<F, R, T>(f: F) -> Result<T, Error>
-    where F: FnMut(Option<React<R>>) -> Result<T, Error>
-{
-    retry(3, Duration::from_secs(1), on_error, f)
-}
-
-pub fn can_retry(err: &Error) -> bool {
-    true
-}
-
 pub fn is_unauthorised(err: &Error) -> bool {
     match *err {
         Error::Client(client::Error::Status(StatusCode::Unauthorized))        => true,

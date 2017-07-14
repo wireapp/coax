@@ -5,7 +5,7 @@ use json::{FromJson, Decoder, DecodeResult, Utf8Buffer};
 
 // Access token /////////////////////////////////////////////////////////////
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct AccessToken<'a>{
     pub token:     Cow<'a, str>,
     pub created:   Instant,

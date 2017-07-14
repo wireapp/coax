@@ -1,8 +1,9 @@
+use std;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fs::{self, DirBuilder, File};
-use std::io::{self, Cursor, Read};
+use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 use std::str;
 use std::sync::{Arc, Mutex};
@@ -32,12 +33,12 @@ use coax_data::{MessageStatus, MessageData, NewMessage, QueueItem, QueueItemData
 use coax_data::{NewAsset, AssetStatus, AssetType, Encryption};
 use coax_data::db::{self, PagingState};
 use config;
-use error::{self, Error, React};
+use cookie::Cookie;
+use error::Error;
 use futures::{Future, Stream};
-use futures::future;
+use futures::future::{self, Either, Loop};
 use cryptobox::{CBox, CBoxSession};
 use cryptobox::store::file::FileStore;
-use hyper::header::Cookie;
 use json::{ToJson, Encoder, Decoder};
 use json::decoder::ReadIter;
 use native_tls::TlsConnector;
@@ -49,43 +50,44 @@ use proteus::keys::PreKeyId;
 use protobuf::{self, Message};
 use slog::Logger;
 use tempdir::TempDir;
+use tokio_core::reactor::Handle;
+use tokio_file_unix::{File as AsyncFile};
+use tokio_io::io;
 use url::Url;
 
-pub struct Actor<S> {
+macro_rules! with {
+    ($($name:ident),+ => $f:expr) => {{
+        $(let $name = $name.clone();)+
+        $f
+    }}
+}
+
+macro_rules! sync {
+    ($e: expr) => {
+        match $e {
+            Err(e) => return Either::A(future::err(e.into())),
+            Ok(x)  => x
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Actor {
+    inner: Arc<Inner>
+}
+
+struct Inner {
     logger: Logger,
     config: config::Main,
-    tls:    TlsConnector,
-    state:  S,
-}
-
-// Actor states
-
-pub struct Init(());
-
-pub struct Connected {
-    client: Client
-}
-
-pub struct Offline {
-    user:  UserData
-}
-
-pub struct Online {
-    user:   UserData,
-    client: Client
-}
-
-// Additional data types
-
-pub struct UserData {
+    client: Client,
+    handle: Handle,
     user:   User<'static>,
     dbase:  Database,
-    creds:  Arc<Mutex<Credentials<'static, Cookie>>>,
+    creds:  Mutex<Credentials<'static, Cookie<'static>>>,
     device: Device,
     assets: PathBuf
 }
 
-#[derive(Clone)]
 struct Device {
     fresh:  bool,
     client: data::Client<'static>,
@@ -98,730 +100,499 @@ pub enum Delivery {
     Persistent
 }
 
-// Init state operations ////////////////////////////////////////////////////
+impl Actor {
+    /// Create actor from existing user profile.
+    pub fn profile(g: &Logger, cfg: &config::Main, hdl: &Handle, clt: &Client, uid: &UserId) -> Result<Actor, Error> {
+        let logger   = g.new(o!("context" => "Actor"));
+        let assets   = mk_assets_dir(cfg, uid)?;
+        let db_path  = database_path(cfg, uid)?;
 
-impl Actor<Init> {
-    /// Create a new `Actor` value.
-    pub fn new(g: &Logger, cfg: config::Main, tls: TlsConnector) -> Actor<Init> {
-        Actor {
-            logger: g.new(o!("context" => "Actor")),
-            config: cfg,
-            tls:    tls,
-            state:  Init(())
-        }
-    }
+        Database::run_migrations(&logger, &db_path)?;
 
-    /// Transition to `Connected` state.
-    pub fn connected(self, c: Client) -> Actor<Connected> {
-        debug!(self.logger, "Init -> Connected");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Connected { client: c }
-        }
-    }
+        let dbase = open_database(&logger, cfg, uid)?;
 
-    /// Transition to `Offline` state.
-    pub fn offline(self, u: UserData) -> Actor<Offline> {
-        debug!(self.logger, "Init -> Offline");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Offline { user: u }
-        }
-    }
+        let user = dbase.user(uid)?
+            .ok_or(Error::Profile(uid.clone(), "user not found"))?;
 
-    /// Transition to `Online` state
-    pub fn online(self, c: Client, u: UserData) -> Actor<Online> {
-        debug!(self.logger, "Init -> Online");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Online { user: u, client: c }
-        }
-    }
+        let client_id = my_client_id(&dbase)?
+            .ok_or(Error::Profile(uid.clone(), "client id not found"))?;
 
-//    /// Load an existing user profile from local storage.
-//    pub fn profile(&mut self, user_id: &UserId) -> Result<UserData, Error> {
-//        let assets = self.mk_assets_dir(user_id)?;
-//
-//        let db_path = self.database_path(user_id)?;
-//        Database::run_migrations(&self.logger, &db_path)?;
-//
-//        let dbase = self.open_database(user_id)?;
-//
-//        let user = dbase.user(user_id)?
-//            .ok_or(Error::Profile(user_id.clone(), "user not found"))?;
-//
-//        let client_id = my_client_id(&dbase)?
-//            .ok_or(Error::Profile(user_id.clone(), "client id not found"))?;
-//
-//        let client = dbase.client(user_id, &client_id)?
-//            .ok_or(Error::Profile(user_id.clone(), "client not found"))?;
-//
-//        let cookie = cookie(&dbase)?
-//            .ok_or(Error::Profile(user_id.clone(), "cookie not found"))?;
-//
-//        let token = access_token(&dbase)?.map(|s| AccessToken::new(s, Duration::from_millis(0)))
-//            .ok_or(Error::Profile(user_id.clone(), "access token not found"))?;
-//
-//        let creds = Credentials::new(token, cookie);
-//        let cbox  = self.open_cryptobox(user_id)?;
-//
-//        Ok(UserData {
-//            user:   user,
-//            dbase:  dbase,
-//            creds:  Arc::new(Mutex::new(creds)),
-//            device: Device {
-//                fresh:  false,
-//                client: client,
-//                cbox:   cbox
-//            },
-//            assets: assets
-//        })
-//    }
-}
+        let client = dbase.client(uid, &client_id)?
+            .ok_or(Error::Profile(uid.clone(), "client not found"))?;
 
-// Connected state operations ///////////////////////////////////////////////
+        let cookie = cookie(&dbase)?
+            .ok_or(Error::Profile(uid.clone(), "cookie not found"))?;
 
-impl Actor<Connected> {
-    /// Transition to `Online` state
-    pub fn online(self, u: UserData) -> Actor<Online> {
-        debug!(self.logger, "Connected -> Online");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Online { user: u, client: self.state.client }
-        }
-    }
+        let token = access_token(&dbase)?.map(|s| AccessToken::new(s, Duration::from_millis(0)))
+            .ok_or(Error::Profile(uid.clone(), "access token not found"))?;
 
-    /// Transition to `Offline` state
-    pub fn offline(self, u: UserData) -> Actor<Offline> {
-        debug!(self.logger, "Connected -> Offline");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Offline { user: u }
-        }
-    }
+        let creds = Credentials::new(token, cookie);
+        let cbox  = open_cryptobox(cfg, uid)?;
 
-    /// Register a new user with back-end.
-    pub fn register_user<'a>(&mut self, p: user::register::Params<'a>) -> impl Future<Item=(), Error=Error> + 'a {
-        self.state.client.user_register(p).from_err().map(|_| ())
-    }
-/*
-    /// Login an existing user.
-    ///
-    /// If `persist` is `true`, we will store the access credentials in
-    /// our local database.
-    pub fn login(&mut self, p: &user::login::Params) -> Result<UserData, Error> {
-        let credentials = error::retry3x(|r: Option<React<()>>| {
-            if r.is_some() {
-                self.state.client.reconnect()?
-            }
-            self.state.client.user_login(p).map_err(From::from)
-        })?;
-
-        let user = self.lookup_self(&credentials.token)?;
-
-        let db_path = self.database_path(&user.id)?;
-        Database::run_migrations(&self.logger, &db_path)?;
-
-        let dbase  = self.open_database(&user.id)?;
-        let cbox   = self.open_cryptobox(&user.id)?;
-        let assets = self.mk_assets_dir(&user.id)?;
-
-        set_access_token(&dbase, &credentials.token)?;
-        set_cookie(&dbase, &credentials.cookie)?;
-        dbase.insert_user(&user)?;
-
-        let (client, fresh) =
-            if let Some(cid) = my_client_id(&dbase)? {
-                if let Some(client) = dbase.client(&user.id, &cid)? {
-                    (client, false)
-                } else {
-                    let client = self.lookup_self_client(&cid, &credentials.token)?;
-                    dbase.insert_client(&user.id, &client)?;
-                    (data::Client::from_api(user.id.clone(), client, false), false)
-                }
-            } else {
-                let client = self.register_client(&cbox, &credentials.token, p.pass.replicate())?;
-                set_my_client_id(&dbase, &client.id)?;
-                dbase.insert_client(&user.id, &client)?;
-                (data::Client::from_api(user.id.clone(), client, false), true)
-            };
-
-        Ok(UserData {
-            user:   data::User::from_api(user),
+        let inner = Inner {
+            logger: logger,
+            config: cfg.clone(),
+            client: clt.clone(),
+            handle: hdl.clone(),
+            user:   user,
             dbase:  dbase,
-            creds:  Arc::new(Mutex::new(credentials)),
-            assets: assets,
+            creds:  Mutex::new(creds),
             device: Device {
-                fresh:  fresh,
+                fresh:  false,
                 client: client,
                 cbox:   cbox
-            }
-        })
-    }
-
-    // Lookup our own user profile.
-    fn lookup_self(&mut self, t: &AccessToken) -> Result<ApiUser<'static>, Error> {
-        error::retry3x(|r: Option<React<()>>| {
-            if r.is_some() {
-                self.state.client.reconnect()?
-            }
-            self.state.client.self_user(t).map_err(From::from)
-        })
-    }
-
-    // Lookup our own client information by ID.
-    fn lookup_self_client(&mut self, cid: &ClientId, t: &AccessToken) -> Result<ApiClient<'static>, Error> {
-        error::retry3x(|r: Option<React<()>>| {
-            if r.is_some() {
-                self.state.client.reconnect()?
-            }
-            if let Some(c) = self.state.client.self_client(cid, t)? {
-                Ok(c)
-            } else {
-                Err(Error::Message("client not found"))
-            }
-        })
-    }
-
-    // Register a new client with back-end.
-    fn register_client(&mut self, cbox: &CBox<FileStore>, t: &AccessToken, pw: Password) -> Result<ApiClient<'static>, Error> {
-        let mut pkeys = Vec::new();
-        for i in 0 .. 200 {
-            pkeys.push(PreKey {
-                key: cbox.new_prekey(PreKeyId::new(i))?
-            })
-        }
-        let lkey = LastPreKey::new(PreKey {
-            key: cbox.new_prekey(MAX_PREKEY_ID)?
-        }).unwrap();
-        let params = client::register::Params {
-            prekeys:      Cow::Owned(pkeys),
-            last_prekey:  Cow::Owned(lkey),
-            sig_keys:     SignalingKeys::new(),
-            ctype:        client::Type::Permanent,
-            class:        client::Class::Desktop,
-            label:        None,
-            cookie_label: Label::new(format!("Coax-{}", cbox.fingerprint())),
-            password:     Some(pw),
-            model:        Some(Model::new("Coax"))
+            },
+            assets: assets
         };
-        error::retry3x(|r: Option<React<()>>| {
-            if r.is_some() {
-                self.state.client.reconnect()?
+
+        Ok(Actor { inner: Arc::new(inner) })
+    }
+
+    /// Login an existing user.
+    ///
+    /// If `persist` is `true`, we will store the access credentials in our local database.
+    pub fn login<'a>(g: &Logger, cfg: &config::Main, hdl: &Handle, clt: &Client, p: user::login::Params<'a>) -> impl Future<Item=Actor, Error=Error> + 'a {
+        let client = clt.clone();
+        let config = cfg.clone();
+        let logger = g.new(o!("context" => "Actor"));
+        let passwd = p.pass.clone();
+        let handle = hdl.clone();
+
+        clt.user_login(p).from_err()
+            .and_then(move |creds| {
+                client.self_user(&creds.token).map(|usr| (client, usr, creds)).from_err()
+            })
+            .and_then(with!(logger, config => move |(client, user, creds)| {
+                let db_path = sync!(database_path(&config, &user.id));
+                sync!(Database::run_migrations(&logger, &db_path));
+                let dbase  = sync!(open_database(&logger, &config, &user.id));
+                let cbox   = sync!(open_cryptobox(&config, &user.id));
+                let assets = sync!(mk_assets_dir(&config, &user.id));
+                sync!(set_access_token(&dbase, &creds.token));
+                sync!(set_cookie(&dbase, &creds.cookie));
+                sync!(dbase.insert_user(&user));
+                if let Some(devid) = sync!(my_client_id(&dbase)) {
+                    if let Some(d) = sync!(dbase.client(&user.id, &devid)) {
+                        Either::B(Either::A(future::ok((client, user, Some(d), creds, dbase, cbox, assets))))
+                    } else {
+                        Either::B(Either::B(client.self_client(&devid, &creds.token).from_err()
+                            .map(move |dev| {
+                                let d = dev.map(|d| data::Client::from_api(user.id.clone(), d, false));
+                                (client, user, d, creds, dbase, cbox, assets)
+                            })))
+                    }
+                } else {
+                    Either::B(Either::A(future::ok((client, user, None, creds, dbase, cbox, assets))))
+                }
+            }))
+            .and_then(move |(client, user, device, creds, dbase, cbox, assets)| {
+                if let Some(dev) = device {
+                    let inner = Inner {
+                        logger: logger,
+                        config: config,
+                        client: client,
+                        handle: handle,
+                        user:   data::User::from_api(user),
+                        dbase:  dbase,
+                        creds:  Mutex::new(creds),
+                        device: Device {
+                            fresh:  false,
+                            client: dev,
+                            cbox:   cbox
+                        },
+                        assets: assets
+                    };
+                    Either::A(future::ok((Actor { inner: Arc::new(inner) })))
+                } else {
+                    Either::B(Actor::register_client(client.clone(), cbox.clone(), creds.token.clone(), passwd)
+                        .and_then(move |dev| {
+                            dbase.insert_client(&user.id, &dev)?;
+                            set_my_client_id(&dbase, &dev.id)?;
+                            let device = data::Client::from_api(user.id.clone(), dev, false);
+                            let inner = Inner {
+                                logger: logger,
+                                config: config,
+                                client: client,
+                                handle: handle,
+                                user:   data::User::from_api(user),
+                                dbase:  dbase,
+                                creds:  Mutex::new(creds),
+                                device: Device {
+                                    fresh:  true,
+                                    client: device,
+                                    cbox:   cbox
+                                },
+                                assets: assets
+                            };
+                            Ok(Actor { inner: Arc::new(inner) })
+                        }))
+                }
+            })
+    }
+
+    fn register_client<'a>(clt: Client, cbox: CBox<FileStore>, t: AccessToken<'a>, pw: Password<'a>) -> impl Future<Item=ApiClient<'static>, Error=Error> + 'a {
+        future::lazy(move || {
+            let mut pkeys = Vec::new();
+            for i in 0 .. 200 {
+                pkeys.push(PreKey {
+                    key: cbox.new_prekey(PreKeyId::new(i))?
+                })
             }
-            self.state.client.client_register(&params, t).map_err(From::from)
+            let lkey = LastPreKey::new(PreKey {
+                key: cbox.new_prekey(MAX_PREKEY_ID)?
+            }).unwrap();
+            Ok(client::register::Params {
+                prekeys:      Cow::Owned(pkeys),
+                last_prekey:  Cow::Owned(lkey),
+                sig_keys:     SignalingKeys::new(),
+                ctype:        client::Type::Permanent,
+                class:        client::Class::Desktop,
+                label:        None,
+                cookie_label: Label::new(format!("Coax-{}", cbox.fingerprint())),
+                password:     Some(pw),
+                model:        Some(Model::new("Coax"))
+            })
         })
+        .and_then(move |p| clt.client_register(p, &t).from_err())
     }
-*/
-}
-
-// Offline state operations /////////////////////////////////////////////////
-
-impl Actor<Offline> {
-    /// Transition to `Init` state.
-    pub fn init(self) -> Actor<Init> {
-        debug!(self.logger, "Offline -> Init");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Init(())
-        }
-    }
-
-    /// Transition to `Online` state.
-    pub fn online(self, c: Client) -> Actor<Online> {
-        debug!(self.logger, "Offline -> Online");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Online { user: self.state.user, client: c }
-        }
-    }
-
-    /// Transition to `Connected` state.
-    pub fn connected(self, c: Client) -> Actor<Connected> {
-        debug!(self.logger, "Offline -> Connected");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Connected { client: c }
-        }
-    }
-
-//    /// Create `online` clone.
-//    pub fn clone_online(&self, c: Client) -> Result<Actor<Online>, Error> {
-//        debug!(self.logger, "Offline -> Online (cloned)");
-//        let self_id = self.me().id.clone();
-//        let dbase   = self.open_database(&self_id)?;
-//        Ok(Actor {
-//            logger: self.logger.clone(),
-//            config: self.config.clone(),
-//            tls:    self.tls.clone(),
-//            state:  Online {
-//                user: UserData {
-//                    user:   self.state.user.user.clone(),
-//                    dbase:  dbase,
-//                    creds:  self.state.user.creds.clone(),
-//                    device: self.state.user.device.clone(),
-//                    assets: self.state.user.assets.clone()
-//                },
-//                client: c
-//            }
-//        })
-//    }
-
     /// Our own user information.
     pub fn me(&self) -> &User<'static> {
-        &self.state.user.user
+        &self.inner.user
     }
 
     /// Our own client information.
     pub fn client(&self) -> &data::Client<'static> {
-        &self.state.user.device.client
-    }
-
-//    pub fn load_conversations<'a>(&mut self, from: Option<PagingState<db::C>>, num: usize) -> Result<db::Page<Vec<Conversation<'a>>, db::C>, Error> {
-//        debug!(self.logger, "loading conversations from database");
-//        self.state.user.dbase.conversations(from, num).map_err(From::from)
-//    }
-//
-//    pub fn load_messages<'a>(&mut self, cid: &ConvId, from: Option<PagingState<db::M>>, num: usize) -> Result<db::Page<Vec<data::Message<'a>>, db::M>, Error> {
-//        debug!(self.logger, "loading conversation messages"; "id" => %cid);
-//        self.state.user.dbase.messages(cid, from, num).map_err(From::from)
-//    }
-//
-//    pub fn load_contacts<'a>(&mut self) -> Result<Vec<(User<'a>, Connection)>, Error> {
-//        debug!(self.logger, "loading contacts");
-//        self.state.user.dbase.connections().map_err(From::from)
-//    }
-//
-//    pub fn load_user<'a>(&mut self, id: &UserId) -> Result<Option<User<'a>>, Error> {
-//        debug!(self.logger, "loading user"; "id" => %id);
-//        self.state.user.dbase.user(id).map_err(Error::Database)
-//    }
-//
-//    pub fn asset_path(&mut self, k: &AssetKey) -> PathBuf {
-//        self.state.user.assets.join(k.as_str())
-//    }
-//
-//    pub fn load_user_icon(&mut self, u: &User) -> Result<Vec<u8>, Error> {
-//        debug!(self.logger, "loading user icon"; "id" => %u.id);
-//        if let Some(ref i) = u.icon {
-//            self.state.user.assets.push(i.as_str());
-//            let file: Result<Option<File>, Error> = {
-//                debug!(self.logger, "reading asset (locally)"; "key" => %i);
-//                if self.state.user.assets.exists() {
-//                    File::open(&self.state.user.assets).map(Some).map_err(From::from)
-//                } else {
-//                    Ok(None)
-//                }
-//            };
-//            self.state.user.assets.pop();
-//            let mut data = Vec::new();
-//            if let Some(mut f) = file? {
-//                f.read_to_end(&mut data)?;
-//            }
-//            Ok(data)
-//        } else {
-//            Ok(Vec::new())
-//        }
-//    }
-//
-//    /// Store as new message in database.
-//    pub fn store_message(&mut self, cid: &ConvId, msg: &GenericMessage) -> Result<(), Error> {
-//        debug!(self.logger, "store message"; "conv" => %cid, "id" => msg.get_message_id());
-//        save_message(&self.state.user.dbase, cid, &self.me().id, &self.state.user.device.client.id, msg)
-//    }
-//
-//    pub fn enqueue(&mut self, id: &[u8], p: &send::Params, msg: &GenericMessage) -> Result<(), Error> {
-//        debug!(self.logger, "enqueue"; "conv" => %p.conv, "msg" => str::from_utf8(id).unwrap_or("N/A"));
-//        enqueue_message(&self.state.user.dbase, id, p, msg)
-//    }
-//
-//    /// Encrypt message for conversation members.
-//    pub fn prepare_message(&mut self, cid: &ConvId, msg: &GenericMessage) -> Result<send::Params, Error> {
-//        debug!(self.logger, "preparing message"; "conv" => %cid, "id" => msg.get_message_id());
-//
-//        let mut params = send::Params::new(cid.clone(), self.state.user.device.client.id.acquire());
-//        let msg_bytes  = msg.write_to_bytes()?;
-//
-//        let members = self.state.user.dbase.conversation(cid)?
-//            .map(|c| c.members)
-//            .unwrap_or(Vec::new());
-//
-//        for m in &members {
-//            let clients = self.state.user.dbase.clients(m)?;
-//            for c in &clients {
-//                let sid = api::new_session_id(m, &c.id);
-//                if let Some(session) = self.state.user.device.cbox.session(&sid)? {
-//                    params.add(&session, m.clone(), c.id.acquire(), &msg_bytes)?
-//                }
-//            }
-//        }
-//
-//        Ok(params)
-//    }
-//
-//    pub fn save_asset_as(&mut self, k: &AssetKey, p: &Path) -> Result<(), Error> {
-//        debug!(self.logger, "saving asset"; "key" => %k, "file" => ?p);
-//        let src = self.state.user.assets.join(k.as_str());
-//        fs::copy(&src, p)?;
-//        Ok(())
-//    }
-}
-
-// Online state operations //////////////////////////////////////////////////
-
-impl Actor<Online> {
-    /// Transition to `Init` state.
-    pub fn init(self) -> Actor<Init> {
-        debug!(self.logger, "Online -> Init");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Init(())
-        }
-    }
-
-    /// Transition to `Connected` state.
-    pub fn connected(self) -> Actor<Connected> {
-        debug!(self.logger, "Online -> Connected");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Connected { client: self.state.client }
-        }
-    }
-
-    /// Transition to `Offline` state.
-    pub fn offline(self) -> Actor<Offline> {
-        debug!(self.logger, "Online -> Offline");
-        Actor {
-            logger: self.logger,
-            config: self.config,
-            tls:    self.tls,
-            state:  Offline { user: self.state.user }
-        }
-    }
-
-//    /// Create `offline` clone.
-//    pub fn clone_offline(&self) -> Result<Actor<Offline>, Error> {
-//        debug!(self.logger, "Online -> Offline (cloned)");
-//        let self_id = self.me().id.clone();
-//        let dbase   = self.open_database(&self_id)?;
-//        Ok(Actor {
-//            logger: self.logger.clone(),
-//            config: self.config.clone(),
-//            tls:    self.tls.clone(),
-//            state:  Offline {
-//                user: UserData {
-//                    user:   self.state.user.user.clone(),
-//                    dbase:  dbase,
-//                    creds:  self.state.user.creds.clone(),
-//                    device: self.state.user.device.clone(),
-//                    assets: self.state.user.assets.clone()
-//                }
-//            }
-//        })
-//    }
-
-    /// Our own user information.
-    pub fn me(&self) -> &User<'static> {
-        &self.state.user.user
-    }
-
-    /// Our own client information.
-    pub fn client(&self) -> &data::Client<'static> {
-        &self.state.user.device.client
+        &self.inner.device.client
     }
 
     /// Is the current client newly created?
     pub fn is_new_client(&self) -> bool {
-        self.state.user.device.fresh
+        self.inner.device.fresh
+    }
+    pub fn asset_path(&self, k: &AssetKey) -> PathBuf {
+        self.inner.assets.join(k.as_str())
     }
 
-//    /// Create a new "inbox".
-//    ///
-//    /// I.e. a websocket which (when established) listens for
-//    /// new notifications from back-end.
-//    pub fn new_inbox(&mut self) -> Result<Inbox, Error> {
-//        let actor = self.clone()?;
-//        Ok(Inbox::new(&self.logger, actor))
-//    }
-
-    pub fn asset_path(&mut self, k: &AssetKey) -> PathBuf {
-        self.state.user.assets.join(k.as_str())
+    pub fn load_conversations<'a>(&self, from: Option<PagingState<db::C>>, num: usize) -> Result<db::Page<Vec<Conversation<'a>>, db::C>, Error> {
+        debug!(self.inner.logger, "loading conversations from database");
+        self.inner.dbase.conversations(from, num).map_err(From::from)
     }
 
-//    pub fn download_asset(&mut self, k: &AssetKey, t: Option<&AssetToken>) -> Result<(), Error> {
-//        debug!(self.logger, "downloading asset"; "key" => %k);
-//        self.state.user.assets.push(k.as_str());
-//        if self.state.user.assets.exists() {
-//            debug!(self.logger, "asset already downloaded"; "key" => %k);
-//            self.state.user.assets.pop();
-//            return Ok(())
-//        }
-//        let result = error::retry3x(|r: Option<React<()>>| {
-//            self.react(r)?;
-//            let creds = self.state.user.creds.lock().unwrap();
-//            let url = self.state.client.asset_url(k, t, &creds.token)?;
-//            debug!(self.logger, "fetching asset"; "url" => %url);
-//            let dom = url.host_str().ok_or(Error::Message("missing host in asset url"))?;
-//            let (mut rpc, tkn) = self.state.client.prepare_download(&url, dom)?;
-//            if rpc.response().status() != 200 {
-//                return Err(io::Error::new(io::ErrorKind::NotFound, "asset not found").into())
-//            }
-//            let mut r = rpc.reader(tkn).map_err(|e| ClientError::Rpc(e) : ClientError<Void>)?;
-//            let temp  = TempDir::new_in(&self.config.data.root, "coax")?;
-//            let path  = temp.path().join(k.as_str());
-//            {
-//                let mut f = File::create(&path)?;
-//                io::copy(&mut r, &mut f)?;
-//            }
-//            fs::rename(&path, &self.state.user.assets)?;
-//            Ok(())
-//        });
-//        self.state.user.assets.pop();
-//        result
-//    }
-//
-//    pub fn save_asset_as(&mut self, k: &AssetKey, p: &Path) -> Result<(), Error> {
-//        debug!(self.logger, "saving asset"; "key" => %k, "file" => ?p);
-//        let src = self.state.user.assets.join(k.as_str());
-//        fs::copy(&src, p)?;
-//        Ok(())
-//    }
-//
-//    pub fn decrypt_asset(&mut self, k: &AssetKey, e: Encryption, key: &[u8], cksum: Option<&[u8]>) -> Result<(), Error> {
-//        let input = {
-//            let mut c = io::Cursor::new(Vec::new());
-//            self.state.user.assets.push(k.as_str());
-//            let f = File::open(&self.state.user.assets);
-//            self.state.user.assets.pop();
-//            io::copy(&mut f?, &mut c)?;
-//            c.into_inner()
-//        };
-//        if let Some(cs) = cksum {
-//            let mut h = Hasher::new(MessageDigest::sha256())?;
-//            h.update(&input)?;
-//            let sha256 = h.finish2()?;
-//            if sha256.as_ref() != cs {
-//                return Err(Error::Message("asset checksum check failed"))
-//            }
-//        } else {
-//            if e == Encryption::AesCbc {
-//                return Err(Error::Message("missing asset checksum"))
-//            }
-//        }
-//        if input.len() < 16 || input.len() % 8 != 0 {
-//            return Err(Error::Message("encrypted asset data length invalid"))
-//        }
-//        let iv    = &input[0 .. 16];
-//        let data  = &input[16 .. input.len()];
-//        let plain = match e {
-//            Encryption::AesCbc => symm::decrypt(symm::Cipher::aes_256_cbc(), key, Some(iv), data)?,
-//            Encryption::AesGcm => symm::decrypt(symm::Cipher::aes_256_gcm(), key, Some(iv), data)?
-//        };
-//        let temp = TempDir::new_in(&self.config.data.root, "coax")?;
-//        let path = temp.path().join(k.as_str());
-//        {
-//            let mut f = File::create(&path)?;
-//            io::copy(&mut plain.as_slice(), &mut f)?;
-//        }
-//        self.state.user.assets.push(k.as_str());
-//        let result = fs::rename(&path, &self.state.user.assets);
-//        self.state.user.assets.pop();
-//        result?;
-//        self.state.user.dbase.update_asset_status(k, AssetStatus::Local)?;
-//        Ok(())
-//    }
-//
-//    pub fn load_user_icon(&mut self, u: &User) -> Result<Vec<u8>, Error> {
-//        debug!(&self.logger, "loading user icon"; "id" => %u.id);
-//        if let Some(ref i) = u.icon {
-//            self.download_asset(i, None)?;
-//            let mut file = {
-//                self.state.user.assets.push(i.as_str());
-//                let f = File::open(&self.state.user.assets);
-//                self.state.user.assets.pop();
-//                f?
-//            };
-//            let mut data = Vec::new();
-//            file.read_to_end(&mut data)?;
-//            Ok(data)
-//        } else {
-//            Ok(Vec::new())
-//        }
-//    }
-//
-//    /// Given some `UserId` return the corresponding user data.
-//    ///
-//    /// If the user is found in local storage and `allow_local` is `true`
-//    /// it is returned right away, otherwise we try to get the information
-//    /// from back-end and save it locally.
-//    pub fn resolve_user<'a>(&mut self, id: &UserId, allow_local: bool) -> Result<Option<User<'a>>, Error> {
-//        if allow_local {
-//            if let Some(usr) = self.state.user.dbase.user(id)? {
-//                if usr.deleted {
-//                    return Ok(None)
-//                } else {
-//                    return Ok(Some(usr))
-//                }
-//            }
-//        }
-//        let usr = error::retry3x(|r: Option<React<()>>| {
-//            self.react(r)?;
-//            let creds = self.state.user.creds.lock().unwrap();
-//            let usr = self.state.client.user(id, &creds.token)?;
-//            Ok(usr)
-//        })?;
-//        if let Some(u) = usr {
-//            self.state.user.dbase.insert_user(&u)?;
-//            if u.deleted == Some(true) {
-//                Ok(None)
-//            } else {
-//                Ok(Some(User::from_api(u)))
-//            }
-//        } else {
-//            warn!(self.logger, "user not found"; "id" => %id);
-//            Ok(None)
-//        }
-//    }
-//
-//    /// Given some `UserId` and `ClientId` return the corresponding client data.
-//    ///
-//    /// If the client is found in local storage it is returned right away,
-//    /// otherwise we try to get the information from back-end and save it locally.
-//    pub fn resolve_client<'a>(&mut self, uid: &UserId, cid: &ClientId) -> Result<Option<data::Client<'a>>, Error> {
-//        if let Some(clt) = self.state.user.dbase.client(uid, cid)? {
-//            return Ok(Some(clt))
-//        }
-//        let client = error::retry3x(|r: Option<React<()>>| {
-//            self.react(r)?;
-//            let creds = self.state.user.creds.lock().unwrap();
-//            let client = self.state.client.user_client(uid, cid, &creds.token)?;
-//            Ok(client)
-//        })?;
-//        if let Some(c) = client {
-//            self.state.user.dbase.insert_client(uid, &c)?;
-//            Ok(Some(data::Client::from_api(uid.clone(), c, false)))
-//        } else {
-//            warn!(self.logger, "client not found"; "user" => %uid, "id" => %cid);
-//            Ok(None)
-//        }
-//    }
-//
-//    /// Given some `UserId` return the corresponding clients.
-//    ///
-//    /// If the clients are found in local storage they are returned right away,
-//    /// otherwise we try to get the information from back-end and save it locally.
-//    pub fn resolve_clients<'a>(&mut self, uid: &UserId) -> Result<Vec<data::Client<'a>>, Error> {
-//        let clients = self.state.user.dbase.clients(uid)?;
-//        if !clients.is_empty() {
-//            return Ok(clients)
-//        }
-//        let clients = error::retry3x(|r: Option<React<()>>| {
-//            self.react(r)?;
-//            let creds = self.state.user.creds.lock().unwrap();
-//            let clients = self.state.client.user_clients(uid, &creds.token)?;
-//            Ok(clients)
-//        })?;
-//        self.state.user.dbase.insert_clients(uid, &clients)?;
-//        Ok(clients.into_iter().map(|c| data::Client::from_api(uid.clone(), c, false)).collect())
-//    }
-//
-//    /// Given some conversation ID return the corresponding conversation data.
-//    ///
-//    /// If the conversation is found in local storage it is retured right away,
-//    /// otherwise we try to get the information from back-end and save it locally.
-//    pub fn resolve_conversation<'a>(&mut self, id: &ConvId) -> Result<Option<Conversation<'a>>, Error> {
-//        if let Some(c) = self.state.user.dbase.conversation(id)? {
-//            return Ok(Some(c))
-//        }
-//
-//        enum LookupResult<'a> {
-//            Found(api::conv::Conversation<'a>),
-//            NotFound,
-//            PastMember
-//        }
-//
-//        let conv = error::retry3x(|r: Option<React<()>>| {
-//            self.react(r)?;
-//            let creds = self.state.user.creds.lock().unwrap();
-//            if let Some(c) = self.state.client.conversation(id, &creds.token)? {
-//                if c.members.me.current {
-//                    Ok(LookupResult::Found(c))
-//                } else {
-//                    Ok(LookupResult::PastMember)
-//                }
-//            } else {
-//                Ok(LookupResult::NotFound)
-//            }
-//        })?;
-//
-//        match conv {
-//            LookupResult::Found(mut c) => {
-//                self.resolve_user(&c.creator, true)?;
-//                c.members.others.retain(|m| m.current);
-//                let mut nobody_left = true;
-//                for m in &c.members.others {
-//                    if m.id == self.me().id {
-//                        continue
-//                    }
-//                    nobody_left &= self.resolve_user(&m.id, true)?.is_none()
-//                }
-//                if c.typ == ConvType::OneToOne && nobody_left {
-//                    info!(self.logger, "ignoring 1:1 conversation without peer"; "conv" => %c.id);
-//                    return Ok(None)
-//                }
-//                let t = Utc::now();
-//                self.state.user.dbase.insert_conversation(&t, &c)?;
-//                Ok(Some(Conversation::from_api(t, c)))
-//            }
-//            LookupResult::NotFound => {
-//                info!(self.logger, "conversation not found"; "id" => %id);
-//                Ok(None)
-//            }
-//            LookupResult::PastMember => {
-//                debug!(self.logger, "past member of conversation"; "id" => %id);
-//                Ok(None)
-//            }
-//        }
-//    }
-//
-//    /// Resolve all conversations (up to 1000).
-//    pub fn resolve_conversations(&mut self) -> Result<(), Error> {
-//        debug!(self.logger, "resolving conversations");
-//        let mut page  = self.conversation_ids(256, None)?;
-//        let mut total = page.value.len();
-//        loop {
-//            debug!(self.logger, "page of conversation ids"; "len" => page.value.len());
-//            for id in &page.value {
-//                self.resolve_conversation(id)?;
-//            }
-//            if !page.has_more || page.value.is_empty() || total > 1000 { // TODO
-//                break
-//            }
-//            page   = self.conversation_ids(256, page.value.last())?;
-//            total += page.value.len()
-//        }
-//        Ok(())
-//    }
+    pub fn load_messages<'a>(&self, cid: &ConvId, from: Option<PagingState<db::M>>, num: usize) -> Result<db::Page<Vec<data::Message<'a>>, db::M>, Error> {
+        debug!(self.inner.logger, "loading conversation messages"; "id" => %cid);
+        self.inner.dbase.messages(cid, from, num).map_err(From::from)
+    }
+
+    pub fn load_contacts<'a>(&self) -> Result<Vec<(User<'a>, Connection)>, Error> {
+        debug!(self.inner.logger, "loading contacts");
+        self.inner.dbase.connections().map_err(From::from)
+    }
+
+    pub fn load_user<'a>(&self, id: &UserId) -> Result<Option<User<'a>>, Error> {
+        debug!(self.inner.logger, "loading user"; "id" => %id);
+        self.inner.dbase.user(id).map_err(Error::Database)
+    }
+
+    pub fn load_user_icon(&self, u: &User) -> Result<Vec<u8>, Error> {
+        debug!(self.inner.logger, "loading user icon"; "id" => %u.id);
+        let mut data = Vec::new();
+        if let Some(ref i) = u.icon {
+            let path = self.inner.assets.join(i.as_str());
+            debug!(self.inner.logger, "reading asset"; "key" => %i);
+            if path.exists() {
+                let mut file = File::open(&path)?;
+                file.read_to_end(&mut data)?;
+            }
+        }
+        Ok(data)
+    }
+
+    /// Store as new message in database.
+    pub fn store_message(&self, cid: &ConvId, msg: &GenericMessage) -> Result<(), Error> {
+        debug!(self.inner.logger, "store message"; "conv" => %cid, "id" => msg.get_message_id());
+        save_message(&self.inner.dbase, cid, &self.me().id, &self.inner.device.client.id, msg)
+    }
+
+    pub fn enqueue(&self, id: &[u8], p: &send::Params, msg: &GenericMessage) -> Result<(), Error> {
+        debug!(self.inner.logger, "enqueue"; "conv" => %p.conv, "msg" => str::from_utf8(id).unwrap_or("N/A"));
+        enqueue_message(&self.inner.dbase, id, p, msg)
+    }
+
+    /// Encrypt message for conversation members.
+    pub fn prepare_message(&self, cid: &ConvId, msg: &GenericMessage) -> Result<send::Params, Error> {
+        debug!(self.inner.logger, "preparing message"; "conv" => %cid, "id" => msg.get_message_id());
+
+        let mut params = send::Params::new(cid.clone(), self.inner.device.client.id.acquire());
+        let msg_bytes  = msg.write_to_bytes()?;
+
+        let members = self.inner.dbase.conversation(cid)?
+            .map(|c| c.members)
+            .unwrap_or(Vec::new());
+
+        for m in &members {
+            let clients = self.inner.dbase.clients(m)?;
+            for c in &clients {
+                let sid = api::new_session_id(m, &c.id);
+                if let Some(session) = self.inner.device.cbox.session(&sid)? {
+                    params.add(&session, m.clone(), c.id.acquire(), &msg_bytes)?
+                }
+            }
+        }
+
+        Ok(params)
+    }
+
+    pub fn save_asset_as(&self, k: &AssetKey, p: &Path) -> Result<(), Error> {
+        debug!(self.inner.logger, "saving asset"; "key" => %k, "file" => ?p);
+        let src = self.inner.assets.join(k.as_str());
+        fs::copy(&src, p)?;
+        Ok(())
+    }
+
+    pub fn download_asset<'a>(&self, k: &AssetKey, t: Option<&AssetToken>) -> impl Future<Item=(), Error=Error> + 'a {
+        let path = self.inner.assets.join(k.as_str());
+        if path.exists() {
+            debug!(self.inner.logger, "asset already downloaded"; "key" => %k);
+            return Either::A(future::ok(()))
+        }
+
+        let this  = self.clone();
+        let akey  = k.acquire();
+        let creds = self.inner.creds.lock().unwrap();
+
+        Either::B(self.inner.client.asset_url(k, t, &creds.token).from_err()
+            .and_then(with!(this => move |url| {
+                debug!(this.inner.logger, "fetching asset"; "url" => %url);
+                let clt = sync!(Client::new(&this.inner.logger, url, this.inner.client.tls(), &this.inner.handle));
+                Either::B(clt.get().from_err())
+            }))
+            .and_then(with!(this => move |stream| {
+                let temp = sync!(TempDir::new_in(&this.inner.config.data.root, "coax"));
+                let path = temp.path().join(akey.as_str());
+                let file = sync!(AsyncFile::new_nb(sync!(File::create(&path))).and_then(|af| af.into_io(&this.inner.handle)));
+                Either::B(stream.fold(file, |file, chunk| io::write_all(file, chunk).map(|xy| xy.0))
+                    .from_err()
+                    .map(move |_| (path, temp)))
+            }))
+            .and_then(move |(path, _)| {
+                fs::rename(&path, &this.inner.assets).map_err(From::from)
+            }))
+    }
+
+    pub fn decrypt_asset(&self, k: &AssetKey, e: Encryption, key: &[u8], cksum: Option<&[u8]>) -> Result<(), Error> {
+        let asset_path = self.inner.assets.join(k.as_str());
+        let input = {
+            let mut c = std::io::Cursor::new(Vec::new());
+            let mut f = File::open(&asset_path)?;
+            std::io::copy(&mut f, &mut c)?;
+            c.into_inner()
+        };
+        if let Some(cs) = cksum {
+            let mut h = Hasher::new(MessageDigest::sha256())?;
+            h.update(&input)?;
+            let sha256 = h.finish2()?;
+            if sha256.as_ref() != cs {
+                return Err(Error::Message("asset checksum check failed"))
+            }
+        } else {
+            if e == Encryption::AesCbc {
+                return Err(Error::Message("missing asset checksum"))
+            }
+        }
+        if input.len() < 16 || input.len() % 8 != 0 {
+            return Err(Error::Message("encrypted asset data length invalid"))
+        }
+        let iv    = &input[0 .. 16];
+        let data  = &input[16 .. input.len()];
+        let plain = match e {
+            Encryption::AesCbc => symm::decrypt(symm::Cipher::aes_256_cbc(), key, Some(iv), data)?,
+            Encryption::AesGcm => symm::decrypt(symm::Cipher::aes_256_gcm(), key, Some(iv), data)?
+        };
+        let temp = TempDir::new_in(&self.inner.config.data.root, "coax")?;
+        let path = temp.path().join(k.as_str());
+        {
+            let mut f = File::create(&path)?;
+            std::io::copy(&mut plain.as_slice(), &mut f)?;
+        }
+        fs::rename(&path, &asset_path)?;
+        self.inner.dbase.update_asset_status(k, AssetStatus::Local)?;
+        Ok(())
+    }
+
+
+    /// Given some `UserId` return the corresponding user data.
+    ///
+    /// If the user is found in local storage and `allow_local` is `true`
+    /// it is returned right away, otherwise we try to get the information
+    /// from back-end and save it locally.
+    pub fn resolve_user<'a>(&self, id: &UserId, allow_local: bool) -> impl Future<Item=Option<User<'static>>, Error=Error> + 'a {
+        if allow_local {
+            if let Some(usr) = sync!(self.inner.dbase.user(id)) {
+                if usr.deleted {
+                    return Either::B(Either::A(Either::A(future::ok(None))))
+                } else {
+                    return Either::B(Either::A(Either::B(future::ok(Some(usr)))))
+                }
+            }
+        }
+        let this  = self.clone();
+        let creds = self.inner.creds.lock().unwrap();
+        Either::B(Either::B(self.inner.client.user(id, &creds.token).from_err()
+            .and_then(with!(id => move |usr| {
+                if let Some(u) = usr {
+                    sync!(this.inner.dbase.insert_user(&u));
+                    if u.deleted == Some(true) {
+                        Either::B(future::ok(None))
+                    } else {
+                        Either::B(future::ok(Some(User::from_api(u))))
+                    }
+                } else {
+                    warn!(this.inner.logger, "user not found"; "id" => %id);
+                    Either::B(future::ok(None))
+                }
+            }))))
+    }
+
+    /// Given some `UserId` and `ClientId` return the corresponding client data.
+    ///
+    /// If the client is found in local storage it is returned right away,
+    /// otherwise we try to get the information from back-end and save it locally.
+    pub fn resolve_client<'a>(&self, uid: &UserId, cid: &ClientId) -> impl Future<Item=Option<data::Client<'static>>, Error=Error> + 'a {
+        if let Some(clt) = sync!(self.inner.dbase.client(uid, cid)) {
+            return Either::B(Either::A(future::ok(Some(clt))))
+        }
+        let this  = self.clone();
+        let creds = self.inner.creds.lock().unwrap();
+        let cltid = cid.acquire();
+        Either::B(Either::B(self.inner.client.user_client(uid, cid, &creds.token).from_err()
+            .and_then(with!(uid => move |client| {
+                if let Some(c) = client {
+                    sync!(this.inner.dbase.insert_client(&uid, &c));
+                    Either::B(future::ok(Some(data::Client::from_api(uid.clone(), c, false))))
+                } else {
+                    warn!(this.inner.logger, "client not found"; "user" => %uid, "id" => %cltid);
+                    Either::B(future::ok(None))
+                }
+            }))))
+    }
+
+    /// Given some `UserId` return the corresponding clients.
+    ///
+    /// If the clients are found in local storage they are returned right away,
+    /// otherwise we try to get the information from back-end and save it locally.
+    pub fn resolve_clients<'a>(&self, uid: &UserId) -> impl Future<Item=Vec<data::Client<'static>>, Error=Error> + 'a {
+        let clients = sync!(self.inner.dbase.clients(uid));
+        if !clients.is_empty() {
+            return Either::B(Either::A(future::ok(clients)))
+        }
+        let this  = self.clone();
+        let creds = self.inner.creds.lock().unwrap();
+        Either::B(Either::B(self.inner.client.user_clients(uid, &creds.token).from_err()
+            .and_then(with!(uid => move |clients| {
+                sync!(this.inner.dbase.insert_clients(&uid, &clients));
+                Either::B(future::ok(clients.into_iter().map(|c| data::Client::from_api(uid.clone(), c, false)).collect()))
+            }))))
+    }
+
+    /// Given some conversation ID return the corresponding conversation data.
+    ///
+    /// If the conversation is found in local storage it is retured right away,
+    /// otherwise we try to get the information from back-end and save it locally.
+    pub fn resolve_conversation<'a>(&self, id: &ConvId) -> impl Future<Item=Option<Conversation<'static>>, Error=Error> + 'a {
+        if let Some(c) = sync!(self.inner.dbase.conversation(id)) {
+            return Either::B(Either::A(future::ok(Some(c))))
+        }
+
+        enum LookupResult<'a> {
+            Found(api::conv::Conversation<'a>),
+            NotFound,
+            PastMember
+        }
+
+        let this  = self.clone();
+        let creds = self.inner.creds.lock().unwrap();
+
+        Either::B(Either::B(self.inner.client.conversation(id, &creds.token).from_err()
+            .map(|conv| {
+                if let Some(c) = conv {
+                    if c.members.me.current {
+                        LookupResult::Found(c)
+                    } else {
+                        LookupResult::PastMember
+                    }
+                } else {
+                    LookupResult::NotFound
+                }
+            })
+            .and_then(with!(this, id => move |lresult| {
+                match lresult {
+                    LookupResult::Found(mut c) => {
+                        Either::A(this.resolve_user(&c.creator, true)
+                            .and_then(with!(this => move |_| {
+                                c.members.others.retain(|m| m.current);
+                                let mut others = Vec::new();
+                                for m in &c.members.others {
+                                    if m.id == this.me().id {
+                                        continue
+                                    }
+                                    others.push(this.resolve_user(&m.id, true))
+                                }
+                                future::join_all(others).map(|members| (c, members))
+                            }))
+                            .and_then(move |(c, members)| {
+                                let all_gone = members.iter().all(Option::is_none);
+                                if c.typ == ConvType::OneToOne && all_gone {
+                                    info!(this.inner.logger, "ignoring 1:1 conversation without peer"; "conv" => %c.id);
+                                    Either::B(future::ok(None))
+                                } else {
+                                    let t = Utc::now();
+                                    sync!(this.inner.dbase.insert_conversation(&t, &c));
+                                    Either::B(future::ok(Some(Conversation::from_api(t, c))))
+                                }
+                            }))
+                    }
+                    LookupResult::NotFound => {
+                        info!(this.inner.logger, "conversation not found"; "id" => %id);
+                        Either::B(future::ok(None))
+                    }
+                    LookupResult::PastMember => {
+                        debug!(this.inner.logger, "past member of conversation"; "id" => %id);
+                        Either::B(future::ok(None))
+                    }
+                }
+            }))))
+    }
+
+    /// Resolve all conversations (up to 1000).
+    pub fn resolve_conversations<'a>(&self) -> impl Future<Item=(), Error=Error> + 'a {
+        let this = self.clone();
+        future::loop_fn((None, 0), move |(last_id, count)| {
+            this.conversation_ids(256, last_id.as_ref())
+                .and_then(with!(this => move |page| {
+                    debug!(this.inner.logger, "page of conversation ids"; "len" => page.value.len());
+                    let state = (page.value.last().cloned(), page.value.len());
+                    let mut convs = Vec::new();
+                    for id in &page.value {
+                        convs.push(this.resolve_conversation(id))
+                    }
+                    future::join_all(convs)
+                        .map(move |_| {
+                            if !page.has_more || page.value.is_empty() || count > 1000 { // TODO
+                                Loop::Break(())
+                            } else {
+                                Loop::Continue(state)
+                            }
+                        })
+                }))
+        })
+    }
+
+    /// Get all conversation IDs.
+    pub fn conversation_ids<'a>(&self, n: usize, c: Option<&ConvId>) -> impl Future<Item=api::Page<Vec<ConvId>>, Error=Error> + 'a {
+        let creds = self.inner.creds.lock().unwrap();
+        self.inner.client.conversations(n, c, &creds.token).from_err()
+    }
+
 //
 //    /// Resolve all user connections.
 //    pub fn resolve_user_connections(&mut self) -> Result<(), Error> {
@@ -911,16 +682,6 @@ impl Actor<Online> {
 //        let t = Utc::now();
 //        self.state.user.dbase.insert_conversation(&t, &c)?;
 //        Ok(Conversation::from_api(t, c))
-//    }
-//
-//    /// Get all conversation IDs.
-//    pub fn conversation_ids(&mut self, n: usize, c: Option<&ConvId>) -> Result<api::Page<Vec<ConvId>>, Error> {
-//        debug!(self.logger, "lookup conversation ids");
-//        error::retry3x(|r: Option<React<()>>| {
-//            self.react(r)?;
-//            let creds = self.state.user.creds.lock().unwrap();
-//            self.state.client.conversations(n, c, &creds.token).map_err(From::from)
-//        })
 //    }
 //
 //    /// Get all user connections.
@@ -1594,92 +1355,43 @@ impl Actor<Online> {
 //        }
 //    }
 //
-//    /// A cloned `Actor` has its own database connection and API client
-//    /// but shares almost everything else with its original.
-//    pub fn clone(&mut self) -> Result<Actor<Online>, Error> {
-//        let self_id = self.me().id.clone();
-//        let dbase   = self.open_database(&self_id)?;
-//        let client  = error::retry3x(|r: Option<React<()>>| {
-//            self.react(r)?;
-//            self.connect()
-//        })?;
-//        Ok(Actor {
-//            logger: self.logger.clone(),
-//            config: self.config.clone(),
-//            tls:    self.tls.clone(),
-//            state:  Online {
-//                user: UserData {
-//                    user:   self.state.user.user.clone(),
-//                    dbase:  dbase,
-//                    creds:  self.state.user.creds.clone(),
-//                    device: self.state.user.device.clone(),
-//                    assets: self.state.user.assets.clone()
-//                },
-//                client: client,
-//                bcast:  self.state.bcast.clone()
-//            }
-//        })
-//    }
 }
 
-// Generic Actor operations /////////////////////////////////////////////////
-
-impl<S> Actor<S> {
-    /// View configuration.
-    pub fn config(&self) -> &config::Main {
-        &self.config
+fn database_path(cfg: &config::Main, uid: &UserId) -> Result<PathBuf, Error> {
+    let mut p = PathBuf::from(&cfg.data.root);
+    p.push(uid.to_string());
+    if !p.exists() {
+        DirBuilder::new().create(&p)?;
     }
+    p.push("main.db");
+    Ok(p)
+}
 
-//    /// Connect to configured `/host/url`.
-//    pub fn connect(&self) -> Result<Client<'static>, Error> {
-//        let url = Url::parse(&self.config.host.url)?;
-//        let mut client =
-//            if let Some(dom) = url.domain() {
-//                Client::connect(&self.logger, url.clone(), dom, self.tls.clone())?
-//            } else {
-//                return Err(Error::Message("/host/url has no domain"))
-//            };
-//        client.set_read_timeout(Some(Duration::from_secs(10)))?;
-//        client.set_write_timeout(Some(Duration::from_secs(10)))?;
-//        Ok(client)
-//    }
-//
-//    fn open_cryptobox(&self, uid: &UserId) -> Result<CBox<FileStore>, Error> {
-//        let mut root = PathBuf::from(&self.config.data.root);
-//        root.push(uid.to_string());
-//        root.push("cryptobox");
-//        if !root.exists() {
-//            DirBuilder::new().create(&root)?;
-//        }
-//        let store = FileStore::new(&root)?;
-//        CBox::open(store).map_err(From::from)
-//    }
-//
-    fn database_path(&self, uid: &UserId) -> Result<PathBuf, Error> {
-        let mut p = PathBuf::from(&self.config.data.root);
-        p.push(uid.to_string());
-        if !p.exists() {
-            DirBuilder::new().create(&p)?;
-        }
-        p.push("main.db");
-        Ok(p)
-    }
+fn open_database(g: &Logger, cfg: &config::Main, uid: &UserId) -> Result<Database, Error> {
+    let path  = database_path(cfg, uid)?;
+    let dbase = Database::open(g, &path)?;
+    Ok(dbase)
+}
 
-    fn open_database(&self, uid: &UserId) -> impl Future<Item=Database, Error=Error> {
-        let logger = self.logger.clone();
-        future::result(self.database_path(uid))
-            .and_then(move |path| future::result(Database::open(&logger, &path)).from_err())
+fn open_cryptobox(cfg: &config::Main, uid: &UserId) -> Result<CBox<FileStore>, Error> {
+    let mut root = PathBuf::from(&cfg.data.root);
+    root.push(uid.to_string());
+    root.push("cryptobox");
+    if !root.exists() {
+        DirBuilder::new().create(&root)?;
     }
-//
-//    fn mk_assets_dir(&self, uid: &UserId) -> Result<PathBuf, Error> {
-//        let mut root = PathBuf::from(&self.config.data.root);
-//        root.push(uid.to_string());
-//        root.push("assets");
-//        if !root.exists() {
-//            DirBuilder::new().create(&root)?;
-//        }
-//        Ok(root)
-//    }
+    let store = FileStore::new(&root)?;
+    CBox::open(store).map_err(From::from)
+}
+
+fn mk_assets_dir(cfg: &config::Main, uid: &UserId) -> Result<PathBuf, Error> {
+    let mut root = PathBuf::from(&cfg.data.root);
+    root.push(uid.to_string());
+    root.push("assets");
+    if !root.exists() {
+        DirBuilder::new().create(&root)?;
+    }
+    Ok(root)
 }
 
 const MY_CLIENT_ID: &'static str = "my-client-id";
@@ -1699,18 +1411,18 @@ fn set_my_client_id(db: &Database, c: &ClientId) -> Result<(), Error> {
     Ok(())
 }
 
-//fn cookie(db: &Database) -> Result<Option<Cookie>, Error> {
-//    if let Some(blob) = db.var(USER_COOKIE)? {
-//		Ok(String::from_utf8(blob).ok().and_then(|s| Cookie::parse(s).ok()))
-//	} else {
-//		Ok(None)
-//	}
-//}
-//
-//fn set_cookie(db: &Database, c: &Cookie) -> Result<(), Error> {
-//    db.set_var(USER_COOKIE, format!("{}", c).as_bytes())?;
-//    Ok(())
-//}
+fn cookie(db: &Database) -> Result<Option<Cookie<'static>>, Error> {
+    if let Some(blob) = db.var(USER_COOKIE)? {
+		Ok(String::from_utf8(blob).ok().and_then(|s| Cookie::parse(s).ok()))
+	} else {
+		Ok(None)
+	}
+}
+
+fn set_cookie(db: &Database, c: &Cookie) -> Result<(), Error> {
+    db.set_var(USER_COOKIE, format!("{}", c).as_bytes())?;
+    Ok(())
+}
 
 fn access_token(db: &Database) -> Result<Option<String>, Error> {
 	if let Some(blob) = db.var(ACCESS_TOKEN)? {
@@ -1823,4 +1535,3 @@ fn enqueue_message(db: &Database, id: &[u8], p: &send::Params, msg: &GenericMess
 //        }
 //    }
 //}
-

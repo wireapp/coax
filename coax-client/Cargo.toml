@@ -11,6 +11,7 @@ description = "Wire API client"
 [dependencies]
 bytes       = ">= 0.4"
 coax-api    = { path = "../coax-api" }
+cookie      = ">= 0.9"
 cryptobox   = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 futures     = { version = ">= 0.1.14", features = ["use_std"] }
 hyper       = ">= 0.11"

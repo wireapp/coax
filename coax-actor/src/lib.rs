@@ -7,6 +7,7 @@ extern crate coax_api;
 extern crate coax_api_proto;
 extern crate coax_client;
 extern crate coax_data;
+extern crate cookie;
 extern crate cryptobox;
 extern crate futures;
 extern crate hyper;
@@ -24,6 +25,9 @@ extern crate serde_derive;
 #[macro_use]
 extern crate slog;
 extern crate tempdir;
+extern crate tokio_core;
+extern crate tokio_io;
+extern crate tokio_file_unix;
 extern crate toml;
 extern crate url;
 

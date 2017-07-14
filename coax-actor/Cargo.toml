@@ -15,6 +15,7 @@ coax-api        = { path = "../coax-api" }
 coax-api-proto  = { path = "../coax-api-proto" }
 coax-client     = { path = "../coax-client" }
 coax-data       = { path = "../coax-data" }
+cookie          = ">= 0.9"
 cryptobox       = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 futures         = { version = ">= 0.1.14", features = ["use_std"] }
 hyper           = ">= 0.11"
@@ -29,6 +30,9 @@ serde           = ">= 0.9"
 serde_derive    = ">= 0.9"
 slog            = ">= 2.0"
 tempdir         = ">= 0.3"
+tokio-core      = ">= 0.1"
+tokio-io        = ">= 0.1"
+tokio-file-unix = ">= 0.4"
 toml            = ">= 0.3"
 url             = ">= 1.1"
 

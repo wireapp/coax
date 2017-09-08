@@ -3,7 +3,6 @@
 extern crate coax_api;
 extern crate coax_net;
 extern crate coax_ws;
-extern crate cryptobox;
 extern crate json;
 #[macro_use]
 extern crate slog;

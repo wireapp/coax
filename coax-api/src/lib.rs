@@ -1,6 +1,5 @@
 extern crate base64;
 extern crate chrono;
-extern crate cookie;
 extern crate coax_api_proto;
 extern crate cryptobox;
 #[macro_use]

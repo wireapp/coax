@@ -13,7 +13,6 @@ coax-api    = { path = "../coax-api" }
 coax-net    = { path = "../coax-net" }
 coax-ws     = { path = "../coax-ws" }
 cookie      = ">= 0.6.1"
-cryptobox   = { git = "https://github.com/wireapp/cryptobox.git", branch = "reshuffle2" }
 json-codec  = ">= 0.4"
 slog        = ">= 2.0"
 openssl     = ">= 0.9"

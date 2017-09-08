@@ -102,6 +102,15 @@ table! {
     }
 }
 
+joinable!(clients -> users(user));
+joinable!(conversations -> users(creator));
+joinable!(members -> users(id));
+joinable!(members -> conversations(conv));
+joinable!(connections -> users(id));
+joinable!(messages -> conversations(conv));
+joinable!(messages -> users(from_usr));
+joinable!(messages -> assets(asset));
+
 pub const SCHEMA: &'static str = r"
     BEGIN;
 

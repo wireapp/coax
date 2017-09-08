@@ -147,7 +147,6 @@ impl<'a> UserUpdate<'a> {
 // Client ///////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
-#[belongs_to(RawUser, foreign_key = "user")]
 #[table_name = "clients"]
 pub struct RawClient {
     pub id:       String,
@@ -249,7 +248,6 @@ impl ConvStatus {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
-#[belongs_to(RawUser, foreign_key = "creator")]
 #[table_name = "conversations"]
 pub struct RawConversation {
     pub id:      Vec<u8>,
@@ -352,8 +350,6 @@ impl<'a> NewConversation<'a> {
 // Member ///////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
-#[belongs_to(RawConversation, foreign_key = "conv")]
-#[belongs_to(RawUser, foreign_key = "id")]
 #[table_name = "members"]
 pub struct Member {
     pub id:   Vec<u8>,
@@ -379,7 +375,6 @@ pub struct NewVar<'a> {
 // Connections //////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
-#[belongs_to(RawUser, foreign_key = "id")]
 #[table_name = "connections"]
 pub struct RawConnection {
     pub id:      Vec<u8>,
@@ -441,9 +436,6 @@ impl<'a> NewConnection<'a> {
 // Messages /////////////////////////////////////////////////////////////////
 
 #[derive(Debug, Clone, PartialEq, Eq, AsChangeset, Associations, Identifiable, Insertable, Queryable)]
-#[belongs_to(RawConversation, foreign_key = "conv")]
-#[belongs_to(RawUser, foreign_key = "from_usr")]
-#[belongs_to(RawAsset, foreign_key = "asset")]
 #[table_name = "messages"]
 pub struct RawMessage {
     pub id:       String,

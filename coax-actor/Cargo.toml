@@ -24,7 +24,6 @@ openssl         = ">= 0.9"
 quick-error     = ">= 1.1"
 proteus         = { git = "https://github.com/wireapp/proteus.git", branch = "develop" }
 protobuf        = ">= 1.0"
-rand            = ">= 0.3"
 serde           = ">= 0.9"
 serde_derive    = ">= 0.9"
 slog            = ">= 2.0"

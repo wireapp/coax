@@ -9,8 +9,6 @@ extern crate coax_api_proto;
 extern crate coax_client;
 extern crate coax_data;
 extern crate coax_net;
-extern crate cookie;
-extern crate cryptobox;
 extern crate fnv;
 extern crate futures;
 extern crate futures_cpupool;
@@ -22,22 +20,18 @@ extern crate glib_sys;
 extern crate gobject_sys;
 extern crate gtk;
 extern crate gtk_sys;
-extern crate json;
 #[macro_use]
 extern crate lazy_static;
 extern crate libc;
 extern crate mime;
 extern crate notify_rust;
 extern crate pango;
-extern crate proteus;
 #[macro_use]
 extern crate quick_error;
-extern crate rand;
 #[macro_use]
 extern crate slog;
 extern crate slog_async;
 extern crate slog_term;
-extern crate url;
 
 use std::error::Error;
 use std::sync::Arc;

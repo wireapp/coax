@@ -29,21 +29,21 @@ coax-net           = { path = "../coax-net" }
 fnv                = ">= 1.0"
 futures            = { version = ">= 0.1.14", features = ["use_std"] }
 futures-cpupool    = ">= 0.1"
-gdk                = "0.5"
-gdk-pixbuf         = "0.1"
-gio                = "0.1"
-glib               = "0.1"
-glib-sys           = "0.3"
-gobject-sys        = "0.3"
-gtk                = { version = "0.1", features = ["v3_16"] }
-gtk-sys            = "0.3"
+gdk                = ">= 0.6"
+gdk-pixbuf         = ">= 0.2"
+gio                = ">= 0.2"
+glib               = ">= 0.3"
+glib-sys           = ">= 0.4"
+gobject-sys        = ">= 0.4"
+gtk                = { version = ">= 0.2", features = ["v3_16"] }
+gtk-sys            = ">= 0.4"
 lazy_static        = ">= 0.2"
 libc               = ">= 0.2"
 mime               = { version = ">= 0.3", default-features = false }
 notify-rust        = ">= 3.3"
 openssl            = ">= 0.9"
 quick-error        = ">= 1.1"
-pango              = "0.1"
+pango              = ">= 0.2"
 slog               = { version = ">= 2.0", features = ["std", "max_level_debug" ] }
 slog-async         = ">= 2.0"
 slog-term          = ">= 2.0"

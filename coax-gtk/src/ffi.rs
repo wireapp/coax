@@ -5,7 +5,6 @@ use glib_sys::{gpointer, g_markup_escape_text};
 use gtk;
 use gtk_sys::{self, GtkListBoxRow};
 use gobject_sys::{GObject, g_object_set_data_full, g_object_get_data};
-use gobject_sys::{g_signal_handler_block, g_signal_handler_unblock};
 use libc::{c_char, c_int, ssize_t};
 
 lazy_static! {
@@ -36,19 +35,6 @@ pub fn get_data<'a, T, A>(obj: &'a T, k: &CStr) -> Option<&'a A>
     unsafe {
         let ptr = g_object_get_data(stash.0, k.as_ptr()) as *mut A;
         ptr.as_ref()
-    }
-}
-
-pub fn block_handler<'a, T>(obj: &'a T, id: u64, block: bool)
-    where T: ToGlibPtr<'a, *mut GObject>
-{
-    let stash = obj.to_glib_none();
-    unsafe {
-        if block {
-            g_signal_handler_block(stash.0, id);
-        } else {
-            g_signal_handler_unblock(stash.0, id);
-        }
     }
 }
 

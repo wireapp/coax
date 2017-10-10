@@ -71,7 +71,7 @@ fn main() {
             let drain  = slog_async::Async::new(format).chan_size(4096).build().fuse();
             let logger = Logger::root(Arc::new(drain), o!("context" => "Coax"));
             match coax::Coax::new(&logger, cfg) {
-                Ok(c)  => { c.run(0, &[]); }
+                Ok(c)  => { c.run(&[]); }
                 Err(e) => {
                     println!("error: {}", e);
                     std::process::exit(1)

@@ -33,7 +33,8 @@ use futures::future;
 use futures_cpupool::{self as pool, CpuPool};
 use gdk::prelude::ContextExt;
 use gdk_pixbuf::{InterpType, Pixbuf};
-use gio::{self, MenuModel, SimpleAction};
+use gio::{self, MenuModel, SimpleActionExt, SimpleAction};
+use gio::{ActionExt, ActionMapExt, ApplicationExt};
 use glib_sys;
 use gtk::prelude::*;
 use gtk::{self, Builder, Button, MenuButton, HeaderBar, Window};
@@ -113,7 +114,7 @@ impl Coax {
         let popover  = header.get_object("profile-popover").unwrap();
 
         let css = gtk::CssProvider::new();
-        css.load_from_data(include_str!("gtk/style.css"))?;
+        CssProviderExtManual::load_from_data(&css, include_str!("gtk/style.css"))?;
 
         let infobar: gtk::InfoBar = builder.get_object("info-bar").unwrap();
         let revealer: gtk::Revealer = builder.get_object("info-revealer").unwrap();
@@ -1652,7 +1653,7 @@ fn show_message(app: &gtk::Application, mtype: MessageType, msg: &str, sec: &str
     let win = app.get_active_window();
     let flags = gtk::DIALOG_MODAL;
     let dialog = MessageDialog::new(win.as_ref(), flags, mtype, ButtonsType::Close, msg);
-    dialog.set_secondary_text(Some(sec));
+    dialog.set_property_secondary_text(Some(sec));
     if let Some(d) = details {
         let label = gtk::Label::new(Some(d));
         label.set_max_width_chars(64);

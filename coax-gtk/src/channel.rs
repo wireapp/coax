@@ -11,7 +11,7 @@ use coax_data::db::{PagingState, M};
 use coax_api::types::{Name, ConvId};
 use ffi;
 use gdk_pixbuf::{InterpType, Pixbuf};
-use gio;
+use gio::{self, MenuExt, SimpleActionExt, SimpleActionGroupExt};
 use gtk::{self, Align};
 use gtk::prelude::*;
 use mime::Mime;

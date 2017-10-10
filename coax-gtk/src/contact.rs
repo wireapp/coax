@@ -3,7 +3,7 @@ use chashmap::{CHashMap, WriteGuard};
 use coax_api::types::UserId;
 use coax_api::user::ConnectStatus;
 use coax_data::Connection;
-use ffi;
+use glib::signal::{signal_handler_block, signal_handler_unblock};
 use gtk::{self, Align};
 use gtk::prelude::*;
 use res;
@@ -190,7 +190,11 @@ impl Contact {
     }
 
     pub fn block_handler(&self, block: bool) {
-        ffi::block_handler(&self.status, self.handler, block);
+        if block {
+            signal_handler_block(&self.status, self.handler)
+        } else {
+            signal_handler_unblock(&self.status, self.handler)
+        }
     }
 
     pub fn set_enabled(&self, value: bool) {

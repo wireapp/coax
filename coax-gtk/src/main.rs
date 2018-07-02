@@ -1,4 +1,4 @@
-#![feature(conservative_impl_trait, type_ascription)]
+#![feature(type_ascription)]
 
 extern crate chrono;
 extern crate clap;

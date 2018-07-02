@@ -9,12 +9,35 @@ RISK.* :warning:
 
 # Coax
 
-*A (barely working) native Wire client for Unix*
+*A (barely working) native Wire GUI client for Unix*
 
 In here you find the source code of Coax, a native client for Wire. The
 repository consists of a single Cargo workspace which contains several
 libraries which may or may not be useful individually. Together they
 form a client with a GTK+ UI for Unix-like operating systems.
+
+
+## Build instructions
+
+Building the whole client depends on recent versions of
+
+- Rust nightly + Cargo
+- libsodium
+- sqlite
+- Gtk+
+- OpenSSL
+
+On startup a configuration file `coax.toml` is written to
+`$HOME/.config/coax/`.
+
+Assuming that you have all non-Rust dependencies installed, you can build
+the client (nightly toolchain required):
+
+    $ rustup override set nightly-2018-04-10
+    $ cargo build
+
+To run it, do `cd coax-gtk` and then either `cargo run` to just run the
+client, or `make install` to install it as a desktop application.
 
 
 ## Motivation
@@ -67,21 +90,6 @@ notifications over websockets.
 
 **[coax-gtk](https://github.com/wireapp/coax/tree/master/coax-gtk)**:
 A simplistic GUI to test the whole stack interactively.
-
-## Build instructions
-
-Building the whole client depends on recent versions of
-
-- Rust nightly + Cargo
-- libsodium
-- sqlite
-- Gtk+
-- OpenSSL
-
-Individual libraries may have less dependencies. To start the build cd
-into `coax-gtk` and type `make install`. The resulting executable is
-installed into `$HOME/.cargo/bin`. On startup a configuration file
-`coax.toml` is written to `$HOME/.config/coax/`.
 
 ## License
 

@@ -27,6 +27,10 @@ Building the whole client depends on recent versions of
 - Gtk+
 - OpenSSL
 
+Here are the instructions for some OSes:
+
+* On macOS, do `brew install glib cairo pango gdk-pixbuf gtk+3 atk`
+
 On startup a configuration file `coax.toml` is written to
 `$HOME/.config/coax/`.
 
@@ -104,8 +108,8 @@ can be found here:
 
   https://github.com/wireapp/wire/raw/master/assets/Wire%20Contributor%20Agreement.pdf
 
-When you submit your first pull request [CLAssistant](https://github.com/CLAassistant)
-will present you a link to a submission form. Once the agreement has been submitted
-your contribution and any possible future ones will be gladly considered for
-inclusion into this project.
-
+When you submit your first pull request
+[CLAssistant](https://github.com/CLAassistant) will present you a link to a
+submission form. Once the agreement has been submitted your contribution and
+any possible future ones will be gladly considered for inclusion into this
+project.

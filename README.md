@@ -83,7 +83,17 @@ into `coax-gtk` and type `make install`. The resulting executable is
 installed into `$HOME/.cargo/bin`. On startup a configuration file
 `coax.toml` is written to `$HOME/.config/coax/` and defaults to the
 `staging` environment.
-
+## Requirements for debian9 (stretch)
+ - gcc
+ - libcairo2-dev
+ - libssl-dev
+ - libdbus-1-dev
+ - libpango1-dev
+ - atk-dev
+ - libgtk-pixbuf2.0-dev
+ - libgdk3.0-cil-dev
+ - libgtk-3-dev
+  - libsql3-dev
 ## License
 
 All code in here is subject to the terms and conditions of the

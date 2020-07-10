@@ -29,7 +29,31 @@ Building the whole client depends on recent versions of
 
 Here are the instructions for some OSes:
 
-* On macOS, do `brew install glib cairo pango gdk-pixbuf gtk+3 atk gnome-icon-theme pkg-config`
+* On macOS, do
+```
+brew install \
+    glib \
+    cairo \
+    pango \
+    gdk-pixbuf \
+    gtk+3 \
+    atk \
+    gnome-icon-theme \
+    pkg-config
+```
+
+* On debian, do
+```
+sudo apt-get install -y \
+    gcc \
+    clang \
+    libcairo2-dev \
+    libssl-dev \
+    libdbus-1-dev \
+    libgdk3.0-cil-dev \
+    libgtk-3-dev \
+    libsqlite3-dev
+```
 
 On startup a configuration file `coax.toml` is written to
 `$HOME/.config/coax/`.
